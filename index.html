@@ -53,6 +53,31 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-off
 .views button:hover{border-color:var(--accent)}
 .views button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
 .views .vsep{height:6px}
+.testhud{position:absolute;left:12px;top:86px;width:240px;max-height:calc(100% - 150px);overflow:auto;z-index:2;padding:8px 10px;font-size:12px;color:var(--fg);background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid var(--line);border-radius:10px;backdrop-filter:blur(4px);box-shadow:0 4px 14px rgba(0,0,0,.08)}
+.testhud.rev{border-color:#d1352b;box-shadow:0 0 0 2px rgba(209,53,43,.25)}
+.tb-h{display:flex;align-items:center;justify-content:space-between;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.tb-h button{border:0;background:none;color:var(--muted);cursor:pointer;font-size:14px;padding:0 4px;transition:transform .2s}
+.testhud.min .tb-h button{transform:rotate(-90deg)}
+.testhud.min #tbBody,.testhud.min .tb-msg,.testhud.min .tb-prog{display:none}
+.tb-go{width:100%;margin:6px 0 4px;padding:6px 8px;font:600 12px var(--f-body);color:#fff;background:var(--accent);border:0;border-radius:7px;cursor:pointer}
+.tb-go[aria-pressed="true"]{background:#d1352b}
+.tb-go[hidden]{display:none}
+.tb-msg{margin:4px 0;padding:6px 8px;border-radius:7px;background:var(--accent-soft);font-weight:600;line-height:1.3}
+.testhud.rev .tb-msg{background:#fde4e1;color:#8f1f17}
+.tb-prog{height:3px;background:var(--line);border-radius:2px;overflow:hidden;margin-bottom:4px}
+.tb-prog i{display:block;height:100%;width:0;background:var(--accent)}
+.tb-row{display:grid;grid-template-columns:10px 1fr auto;gap:3px 7px;align-items:center;padding:4px 0}
+.tb-row.out{border-top:1px dashed var(--line)}
+.tb-row.out ~ .tb-row.out{border-top:0}
+.tb-dot{width:9px;height:9px;border-radius:50%;border:1px solid var(--line);box-sizing:border-box}
+.tb-l{color:var(--muted)}
+.tb-v{font-family:var(--f-mono);font-weight:600;font-variant-numeric:tabular-nums}
+.tb-bar{grid-column:2/4;height:4px;background:var(--line);border-radius:2px;overflow:hidden}
+.tb-bar[hidden]{display:none}
+.tb-bar i{display:block;height:100%;width:0}
+.park{display:flex;align-items:center;gap:10px;margin:2px 0 4px;color:var(--fg)}
+.park b{font-family:var(--f-mono);font-size:20px}
+@media (max-width:700px){ .testhud{width:178px;top:70px;font-size:11px;padding:6px 8px} .park svg{width:84px;height:45px} .park b{font-size:16px} .views button{min-width:36px;height:28px;font-size:10px} .views [data-view="front"],.views [data-view="side"]{display:none} }
 .views button[hidden]{display:none}
 .stage.max{position:fixed;inset:0;z-index:60;height:100vh;height:100dvh;border-radius:0;border:0}
 body.stage-max{overflow:hidden}
@@ -226,6 +251,13 @@ section.compare td:first-child{font-weight:600;white-space:nowrap}
         <button id="btnAssemble" type="button">Remonter la carte</button>
         <button id="btnExplode" type="button" aria-pressed="false">Vue éclatée</button>
         <button id="btnSpin" type="button" aria-pressed="false">Rotation auto</button>
+      </div>
+      <div class="testhud" id="testHud" hidden>
+        <div class="tb-h"><b>Banc de test</b><button type="button" id="tbToggle" aria-expanded="true" aria-label="Réduire ou ouvrir le banc de test">▾</button></div>
+        <button type="button" class="tb-go" id="btnScen" aria-pressed="false">▶ Tester</button>
+        <div class="tb-msg" id="scenMsg" role="status" aria-live="polite" hidden></div>
+        <div class="tb-prog" id="scenBar" hidden><i id="scenProg"></i></div>
+        <div id="tbBody"></div>
       </div>
       <div class="views" id="views" role="toolbar" aria-label="Caméra">
         <button type="button" data-view="fit" title="Recentrer (R)" aria-label="Recentrer"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><circle cx="12" cy="12" r="2.5"/></svg></button>
@@ -870,6 +902,7 @@ function buildPart(p,pcbT){
 }
 
 /* ============ BOARD LIFECYCLE ============ */
+let boardGroupOnce = false;
 let current = null, boardGroup = null, boardBody = null, partGroups = [], selectedId = null, hoverId = null;
 let exploded = false, autoSpin = false;
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1031,8 +1064,9 @@ function loadBoard(b){
   bench = null; resetSim();
 
   const span = Math.max(b.pcb.w, b.pcb.d*1.3);
-  camera.position.set(span*0.55, span*0.9+1.6, span*1.05+2.2);
-  controls.target.set(0,0,0); focusTarget.set(0,0,0);
+  if(typeof camTo==="function" && boardGroupOnce){ camTo(new THREE.Vector3(span*0.55, span*0.9+1.6, span*1.05+2.2), new THREE.Vector3(0,0,0)); }
+  else { camera.position.set(span*0.55, span*0.9+1.6, span*1.05+2.2); controls.target.set(0,0,0); focusTarget.set(0,0,0); }
+  boardGroupOnce = true;
   controls.update();
 
   document.getElementById("bName").textContent = b.name;
@@ -3062,7 +3096,7 @@ function buildBench(){
   }
   bench.traverse(o => { if(o.isMesh && !o.isInstancedMesh && !o.material.transparent && o.material.visible!==false){ o.castShadow = true; o.receiveShadow = true; } });
   bench.visible = activeTab==="lab";
-  syncArena(); syncViewsBar();
+  syncArena(); syncViewsBar(); buildStims(); syncHud(true);
 }
 
 function frameLab(){
@@ -3077,6 +3111,7 @@ const tmpC = new THREE.Color();
 function labFrame(now){
   const L = labs[current?.id]; if(!L) return;
   vehicleStep(now);
+  scenFrame(now); stimFrame(now); syncHud();
   if(!vehicleOf(L)) for(const c of L.comps) if(c.autoD!==undefined) c.autoD = undefined;
   const I = io();
   if(bench && bench.visible){
@@ -4412,7 +4447,7 @@ function vehicleStep(now){
   }
   // la caméra suit le véhicule
   const p = boardGroup.position;
-  if(vehPrev && followVeh){ const d = new THREE.Vector3(p.x - vehPrev.x, (p.y - vehPrev.y)*0.5, p.z - vehPrev.z); if(d.lengthSq() > 0){ camera.position.add(d); controls.target.add(d); focusTarget.add(d); } }
+  if(vehPrev && followVeh){ const d = new THREE.Vector3(p.x - vehPrev.x, (p.y - vehPrev.y)*0.5, p.z - vehPrev.z); if(d.lengthSq() > 0){ camera.position.add(d); controls.target.add(d); focusTarget.add(d); if(camAnim){ camAnim.p0.add(d); camAnim.p1.add(d); camAnim.t0.add(d); camAnim.t1.add(d); } } }
   vehPrev = p.clone();
   sun.position.set(p.x + 5, 12, p.z + 7); sun.target.position.set(p.x, 0, p.z); sun.target.updateMatrixWorld();
 }
@@ -5161,7 +5196,7 @@ function camStep(now){
 }
 function sceneBox(){
   const b = new THREE.Box3();
-  if(activeTab==="lab" && bench && bench.visible) b.setFromObject(boardGroup); else b.setFromObject(boardBody);
+  if(activeTab==="lab" && bench && bench.visible){ b.setFromObject(boardGroup); if(stimG && stimG.userData.list.length){ stimFrame(performance.now()); const sb = new THREE.Box3().setFromObject(stimG); if(!sb.isEmpty()) b.union(sb); } } else b.setFromObject(boardBody);
   const veh = activeTab==="lab" && vehicleOf(labs[current.id]);
   if(veh) b.expandByVector(new THREE.Vector3(veh.type==="rover" ? 5 : 3, 0, veh.type==="rover" ? 5 : 3));
   return b;
@@ -5171,8 +5206,13 @@ function camView(name, box){
   box = box || sceneBox();
   const c = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3());
   const dir = name==="keep" ? camera.position.clone().sub(controls.target).normalize() : new THREE.Vector3(...VIEWS[name]).normalize();
-  const fv = camera.fov*Math.PI/180, fh = 2*Math.atan(Math.tan(fv/2)*camera.aspect);
-  let d = (size.length()/2) / Math.sin(Math.min(fv, fh)/2) * 0.72;
+  const fv = camera.fov*Math.PI/180, tv = Math.tan(fv/2)*0.86, th = tv*camera.aspect;
+  const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0,1,0), dir); if(right.lengthSq() < 1e-6) right.set(1,0,0); right.normalize();
+  const up = new THREE.Vector3().crossVectors(dir, right).normalize();
+  let d = 0; const v = new THREE.Vector3();
+  for(let i=0;i<8;i++){ v.set(i&1 ? box.max.x : box.min.x, i&2 ? box.max.y : box.min.y, i&4 ? box.max.z : box.min.z).sub(c);
+    const z = v.dot(dir); d = Math.max(d, z + Math.abs(v.dot(right))/th, z + Math.abs(v.dot(up))/tv); }
+  d *= 1.04;
   d = Math.max(controls.minDistance, Math.min(controls.maxDistance, d));
   camTo(c.clone().addScaledVector(dir, d), c);
   document.querySelectorAll("#views [data-view]").forEach(b => b.setAttribute("aria-pressed", b.dataset.view===name));
@@ -5218,10 +5258,274 @@ let lastVehKey = "";
 function syncViewsBar(){
   const veh = activeTab==="lab" && current && vehicleOf(labs[current.id]);
   const f = document.getElementById("btnFollow"); if(f) f.hidden = !veh;
-  const key = veh ? veh.type : "none";
+  const key = (veh ? veh.type : "none") + "|" + (current && labs[current.id] ? labs[current.id].proj : "");
   if(activeTab==="lab" && key!==lastVehKey){ lastVehKey = key; setTimeout(frameLab, 80); }
   else if(activeTab!=="lab") lastVehKey = "";
 }
+
+
+/* ============ Banc de test : stimuli 3D, tableau de bord et scénarios ============ */
+let stimG = null, scen = null, hudKey = "", hudT = 0;
+const _sb = new THREE.Box3(), _sv = new THREE.Vector3(), _sq = new THREE.Quaternion(), _sd = new THREE.Vector3();
+function txtSprite(w=3.1, h=1.07){
+  const cvs = document.createElement("canvas"); cvs.width = 320; cvs.height = 110;
+  const tex = new THREE.CanvasTexture(cvs); tex.anisotropy = 4;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, transparent:true, depthTest:false, fog:false, toneMapped:false}));
+  sp.scale.set(w, h, 1); sp.renderOrder = 20; sp.userData = {cvs, tex, key:""}; return sp;
+}
+function setTxt(sp, txt, col="#14202a"){
+  const key = txt + "|" + col; if(sp.userData.key===key) return; sp.userData.key = key;
+  const x = sp.userData.cvs.getContext("2d"); x.clearRect(0,0,320,110);
+  x.fillStyle = "rgba(255,255,255,0.94)"; x.strokeStyle = col; x.lineWidth = 6;
+  x.beginPath(); if(x.roundRect) x.roundRect(5,5,310,100,26); else x.rect(5,5,310,100); x.fill(); x.stroke();
+  x.fillStyle = col; x.font = "800 46px system-ui, -apple-system, Segoe UI, sans-serif"; x.textAlign = "center"; x.textBaseline = "middle";
+  x.fillText(txt, 160, 58, 290); sp.userData.tex.needsUpdate = true;
+}
+function stripeTex(){
+  const c = document.createElement("canvas"); c.width = c.height = 128; const x = c.getContext("2d");
+  x.fillStyle = "#f4f1ea"; x.fillRect(0,0,128,128); x.fillStyle = "#d2372b";
+  for(let i=-128;i<256;i+=42){ x.beginPath(); x.moveTo(i,0); x.lineTo(i+21,0); x.lineTo(i+21-128,128); x.lineTo(i-128,128); x.fill(); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2, 1); return t;
+}
+function puffTex(){
+  const c = document.createElement("canvas"); c.width = c.height = 64; const x = c.getContext("2d");
+  const g = x.createRadialGradient(32,32,2,32,32,30); g.addColorStop(0,"rgba(120,120,120,.85)"); g.addColorStop(1,"rgba(120,120,120,0)");
+  x.fillStyle = g; x.fillRect(0,0,64,64); return new THREE.CanvasTexture(c);
+}
+const sevCol = d => d < 15 ? "#d1352b" : d < 30 ? "#e8770e" : d < 60 ? "#c99a06" : "#1f8a4c";
+const tempCol = t => t < 10 ? "#2a6fd6" : t < 26 ? "#1f8a4c" : t < 32 ? "#e8770e" : "#d1352b";
+const SENSOR_T = new Set(["hcsr04","pir","ir","ldr","dht22","dht11","lm35","mq2","sound","soil","tilt","touch"]);
+
+function buildStims(){
+  if(stimG){ scene.remove(stimG); stimG.traverse(o => { if(o.material) [].concat(o.material).forEach(m => { m.map && m.map.dispose(); m.dispose(); }); if(o.geometry) o.geometry.dispose(); }); }
+  stimG = new THREE.Group(); stimG.userData.list = []; scene.add(stimG);
+  const L = lab(); if(vehicleOf(L)) return;
+  for(const c of L.comps){
+    if(c.off || !SENSOR_T.has(c.type)) continue;
+    const S = {c, label: txtSprite()}; stimG.add(S.label);
+    if(c.type==="hcsr04"){
+      S.wall = new THREE.Group();
+      const panel = new THREE.Mesh(new THREE.BoxGeometry(6.0, 1.9, 0.3), [stimMat("#e9e6df"), stimMat("#e9e6df"), stimMat("#e9e6df"), stimMat("#e9e6df"), new THREE.MeshStandardMaterial({map:stripeTex(), roughness:0.7}), new THREE.MeshStandardMaterial({map:stripeTex(), roughness:0.7})]);
+      panel.position.y = 1.1; panel.castShadow = true; S.wall.add(panel);
+      const foot = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.2, 1.0), stimMat("#3b3f45")); foot.position.y = 0.1; S.wall.add(foot);
+      stimG.add(S.wall);
+      S.beam = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.03, 1), new THREE.MeshBasicMaterial({color:"#1f8a4c", transparent:true, opacity:0.85})); stimG.add(S.beam);
+      S.pulses = [0,1,2].map(() => { const m = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.035, 6, 24, Math.PI*0.7), new THREE.MeshBasicMaterial({color:"#2a6fd6", transparent:true, opacity:0})); stimG.add(m); return m; });
+    } else if(c.type==="pir"){
+      S.person = new THREE.Group();
+      const mat = stimMat("#3d5a80"), skin = stimMat("#e0b48f");
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.5, 2.2, 16), mat); body.position.y = 1.9; S.person.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.42, 16, 12), skin); head.position.y = 3.4; S.person.add(head);
+      S.legs = [-0.22, 0.22].map(x => { const l = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 1.0, 10), stimMat("#22303f")); l.position.set(x, 0.5, 0); S.person.add(l); return l; });
+      S.person.traverse(o => { if(o.isMesh) o.castShadow = true; });
+      stimG.add(S.person);
+      S.cone = new THREE.Mesh(new THREE.CircleGeometry(9, 32, -Math.PI*0.25, Math.PI*0.5), new THREE.MeshBasicMaterial({color:"#888", transparent:true, opacity:0.12, depthWrite:false}));
+      S.cone.rotation.x = -Math.PI/2; stimG.add(S.cone);
+    } else if(c.type==="ir"){
+      S.hand = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.6, 0.5), stimMat("#e0b48f")); S.hand.castShadow = true; stimG.add(S.hand);
+      S.beam = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 1), new THREE.MeshBasicMaterial({color:"#ff3b30", transparent:true, opacity:0.7})); stimG.add(S.beam);
+    } else if(c.type==="ldr"){
+      S.bulbMat = new THREE.MeshStandardMaterial({color:"#fff6d8", emissive:"#ffd36b", emissiveIntensity:1, roughness:0.3});
+      S.bulb = new THREE.Mesh(new THREE.SphereGeometry(0.55, 20, 14), S.bulbMat); stimG.add(S.bulb);
+      S.shade = new THREE.Mesh(new THREE.ConeGeometry(1.0, 0.8, 24, 1, true), stimMat("#2c3036", {side:THREE.DoubleSide})); stimG.add(S.shade);
+      S.light = new THREE.PointLight("#ffd98a", 1, 14, 2); stimG.add(S.light);
+    } else if(c.type==="mq2"){
+      const t = puffTex(); S.puffs = Array.from({length:10}, (_, i) => { const p = new THREE.Sprite(new THREE.SpriteMaterial({map:t, transparent:true, opacity:0, depthWrite:false})); p.userData.ph = i/10; stimG.add(p); return p; });
+    } else if(c.type==="sound"){
+      S.rings = [0,1,2].map(() => { const m = new THREE.Mesh(new THREE.TorusGeometry(0.6, 0.04, 6, 32), new THREE.MeshBasicMaterial({color:"#8a4fd6", transparent:true, opacity:0})); stimG.add(m); return m; });
+    }
+    stimG.userData.list.push(S);
+  }
+}
+function stimMat(c, o={}){ return new THREE.MeshStandardMaterial(Object.assign({color:c, roughness:0.65}, o)); }
+
+function stimFrame(now){
+  if(!stimG) return;
+  stimG.visible = !!(bench && bench.visible);
+  if(!stimG.visible) return;
+  const live = rt.running && !rt.paused;
+  for(const S of stimG.userData.list){
+    const c = S.c, V = bench.userData.comps[c.id]; if(!V || !V.g){ S.label.visible = false; continue; }
+    _sb.setFromObject(V.g); _sb.getCenter(_sv); V.g.getWorldQuaternion(_sq);
+    const fwd = _sd.set(0,0,1).applyQuaternion(_sq); fwd.y = 0; if(fwd.lengthSq() < 1e-4) fwd.set(0,0,1); fwd.normalize();
+    const p = _sv, ang = Math.atan2(fwd.x, fwd.z);
+    S.label.visible = true; S.label.position.set(p.x, p.y + 2.6, p.z);
+    const T = c.type;
+    if(T==="hcsr04"){
+      const d = cv(c,"d"), du = 1.2 + d*0.035, col = sevCol(d);
+      S.wall.position.set(p.x + fwd.x*du, GROUND_Y, p.z + fwd.z*du); S.wall.rotation.y = ang + Math.PI;
+      S.beam.position.set(p.x + fwd.x*du/2, GROUND_Y + 0.03, p.z + fwd.z*du/2); S.beam.rotation.y = ang; S.beam.scale.z = du; S.beam.material.color.set(col);
+      S.label.position.set(p.x + fwd.x*du/2, p.y + 1.6, p.z + fwd.z*du/2); setTxt(S.label, `${Math.round(d)} cm`, col);
+      const per = 500 + du*70;
+      S.pulses.forEach((m, i) => { const k = ((now/per) + i/3) % 1, out = k < 0.5, f = out ? k*2 : 2 - k*2;
+        m.position.set(p.x + fwd.x*du*f, p.y + 0.2, p.z + fwd.z*du*f); m.rotation.set(0, ang + (out ? 0 : Math.PI), 0); m.rotateX(0); m.rotation.z = Math.PI*0.15;
+        m.material.color.set(out ? "#2a6fd6" : "#8a4fd6"); m.material.opacity = live ? 0.75 : 0; });
+    } else if(T==="pir"){
+      const on = !!cv(c,"on"); S.person.visible = on;
+      const s = Math.sin(now/700);
+      S.person.position.set(p.x + fwd.x*6 + fwd.z*s*2.5, GROUND_Y, p.z + fwd.z*6 - fwd.x*s*2.5); S.person.rotation.y = ang + (Math.cos(now/700) > 0 ? Math.PI/2 : -Math.PI/2);
+      S.legs[0].rotation.x = Math.sin(now/120)*0.4; S.legs[1].rotation.x = -Math.sin(now/120)*0.4;
+      S.cone.position.set(p.x, GROUND_Y + 0.02, p.z); S.cone.rotation.z = ang - Math.PI/2; S.cone.rotation.set(-Math.PI/2, 0, ang - Math.PI/2);
+      S.cone.material.color.set(on ? "#d1352b" : "#7b8794"); S.cone.material.opacity = on ? 0.22 : 0.1;
+      setTxt(S.label, on ? "Mouvement !" : "Rien", on ? "#d1352b" : "#5a6a77");
+    } else if(T==="ir"){
+      const on = !!cv(c,"on"); S.hand.visible = on; S.beam.visible = on;
+      S.hand.position.set(p.x + fwd.x*2.2, p.y + 0.3, p.z + fwd.z*2.2); S.hand.rotation.y = ang;
+      S.beam.position.set(p.x + fwd.x*1.1, p.y + 0.1, p.z + fwd.z*1.1); S.beam.rotation.y = ang; S.beam.scale.z = 2.0;
+      setTxt(S.label, on ? "Obstacle" : "Libre", on ? "#d1352b" : "#1f8a4c");
+    } else if(T==="ldr"){
+      const l = cv(c,"l")/100;
+      S.bulb.position.set(p.x, p.y + 4.6, p.z); S.shade.position.set(p.x, p.y + 5.1, p.z);
+      S.bulbMat.emissiveIntensity = 0.05 + l*2.4; S.bulbMat.color.setRGB(0.35 + l*0.65, 0.33 + l*0.62, 0.3 + l*0.5); S.light.position.copy(S.bulb.position); S.light.intensity = l*1.8;
+      S.label.position.set(p.x + fwd.z*1.8, p.y + 2.6, p.z - fwd.x*1.8);
+      setTxt(S.label, `Lumière ${Math.round(l*100)} %`, l < 0.25 ? "#3d4a63" : "#b07a00");
+    } else if(T==="dht22" || T==="dht11"){
+      const t = cv(c,"t"), h = cv(c,"h"); setTxt(S.label, `${(+t).toFixed(T==="dht11" ? 0 : 1)} °C · ${Math.round(h)} %`, tempCol(t));
+    } else if(T==="lm35"){ const t = cv(c,"t"); setTxt(S.label, `${(+t).toFixed(1)} °C`, tempCol(t)); }
+    else if(T==="mq2"){
+      const g = cv(c,"g")/100;
+      S.puffs.forEach(pf => { const k = ((now/2600) + pf.userData.ph) % 1, act = pf.userData.ph < g*1.05;
+        pf.position.set(p.x + fwd.x*1.6 + Math.sin(k*6 + pf.userData.ph*9)*0.6, p.y + k*4, p.z + fwd.z*1.6 + Math.cos(k*5 + pf.userData.ph*7)*0.6);
+        pf.scale.setScalar(0.8 + k*2.2); pf.material.opacity = act ? (1-k)*0.75 : 0; });
+      setTxt(S.label, `Gaz ${Math.round(g*100)} %`, g > 0.4 ? "#d1352b" : g > 0.15 ? "#e8770e" : "#1f8a4c");
+    } else if(T==="sound"){
+      const s = cv(c,"s")/100;
+      S.rings.forEach((m, i) => { const k = ((now/(900 - s*500)) + i/3) % 1; m.position.set(p.x, p.y + 0.6, p.z); m.lookAt(camera.position); m.scale.setScalar(1 + k*2.5*s + 0.2); m.material.opacity = (1-k)*0.7*s; });
+      setTxt(S.label, `Son ${Math.round(s*100)} %`, s > 0.6 ? "#8a4fd6" : "#5a6a77");
+    } else if(T==="soil"){ const m = cv(c,"m"); setTxt(S.label, `Sol ${Math.round(m)} %`, m < 30 ? "#a0522d" : "#2a6fd6"); }
+    else if(T==="tilt"){ const on = !!cv(c,"on"); setTxt(S.label, on ? "Incliné" : "À plat", on ? "#e8770e" : "#5a6a77"); }
+    else if(T==="touch"){ const on = !!cv(c,"on"); setTxt(S.label, on ? "Touché" : "Pas touché", on ? "#d1352b" : "#5a6a77"); }
+  }
+}
+
+/* -- scénarios de test automatiques -- */
+const lin = (t, a, b, t0, t1) => t<=t0 ? a : t>=t1 ? b : a + (b-a)*(t-t0)/(t1-t0);
+const SCEN = {
+  radar:{label:"Marche arrière", dur:18, f:t => { const d = Math.round(t<2 ? 150 : t<12 ? lin(t,150,4,2,12) : t<15 ? 4 : lin(t,4,150,15,18));
+    return {set:[["hcsr04","d",d]], msg: t<2 ? "La voiture passe la marche arrière (R)" : t<12 ? `Marche arrière : le mur approche, ${d} cm` : t<15 ? "STOP ! Obstacle à 4 cm" : "La voiture repart en avant", mode:"R"}; }},
+  alarme:{label:"Intrusion", dur:13, f:t => ({set:[["pir","on", t>3 && t<8 ? 1 : 0]], msg: t<3 ? "Pièce vide : l'alarme surveille" : t<8 ? "Un intrus entre dans la pièce !" : "L'intrus est parti"})},
+  meteo:{label:"Une journée", dur:16, f:t => ({set:[["dht22","t", +lin(t,12,34,1,10).toFixed(1)],["dht22","h", Math.round(lin(t,85,30,1,10))]], msg: t<1 ? "Matin frais et humide" : t<10 ? "Le soleil chauffe : la température monte, l'humidité baisse" : "Après-midi chaud et sec"})},
+  thermostat:{label:"La pièce chauffe", dur:20, f:t => { const T = +(t<9 ? lin(t,21,33,1,9) : lin(t,33,21,11,19)).toFixed(1);
+    return {set:[["dht22","t",T],["lm35","t",T]], msg: t<9 ? `La pièce chauffe : ${T} °C` : t<11 ? "Trop chaud : le ventilateur doit tourner" : `La pièce refroidit : ${T} °C`}; }},
+  arrosage:{label:"Le sol sèche", dur:18, f:t => { const m = Math.round(t<9 ? lin(t,75,12,1,9) : t<12 ? 12 : lin(t,12,75,12,17));
+    return {set:[["soil","m",m]], msg: t<9 ? `Le sol sèche : ${m} %` : t<12 ? "Sol sec : la pompe doit arroser" : `L'eau arrive : ${m} %`}; }},
+  feu:{label:"Un piéton appuie", dur:16, f:t => ({set:[["button","press", t>1.5 && t<2.1 ? 1 : 0]], msg: t<1.5 ? "Le feu est vert pour les voitures" : t<2.1 ? "Un piéton appuie sur le bouton" : "Observez la séquence du feu"})},
+  anneau:{label:"Tourner le bouton", dur:10, f:t => { const v = t<5 ? t/5 : 1 - (t-5)/5; return {set:[["pot","v",v]], msg:`Potentiomètre à ${Math.round(v*100)} %`}; }},
+  compteur:{label:"Tourner l'encodeur", dur:12, f:t => { const n = t<6 ? Math.floor(t*2) : 12 - Math.floor((t-6)*3); return {set:[["encoder","pos",n]], msg: t<6 ? "On tourne vers la droite : le compteur monte" : "On tourne vers la gauche : il descend"}; }},
+  jeu:{label:"Bouger le joystick", dur:12, f:t => ({set:[["joystick","x", Math.round(50 + 48*Math.cos(t*1.3))],["joystick","y", Math.round(50 + 48*Math.sin(t*1.3))]], msg:"Le joystick fait des cercles"})}
+};
+function genericScen(L){
+  const has = L.comps.some(c => !c.off && (c.type==="pot" || c.type==="button" || (COMP[c.type].ctrl || []).some(x => x.type==="range" || x.type==="toggle")));
+  if(!has) return null;
+  return {label:"Test automatique", dur:12, f:t => { const set = [], k = t<6 ? t/6 : 1 - (t-6)/6;
+    for(const c of L.comps){ if(c.off) continue;
+      if(c.type==="pot") set.push(["#"+c.id,"v",k]);
+      else if(c.type==="button") set.push(["#"+c.id,"press", (t%4) > 1 && (t%4) < 1.6 ? 1 : 0]);
+      else for(const x of (COMP[c.type].ctrl || [])){
+        if(x.type==="range") set.push(["#"+c.id, x.k, +(x.min + (x.max-x.min)*k).toFixed(x.step < 1 ? 1 : 0)]);
+        else if(x.type==="toggle") set.push(["#"+c.id, x.k, t>3 && t<8 ? 1 : 0]);
+      } }
+    return {set, msg: t<6 ? "Les entrées montent du minimum au maximum" : "Puis redescendent"}; }};
+}
+const scenFor = L => SCEN[L.proj] || genericScen(L);
+function setCv(c, k, v){
+  if(c.type==="pot"){ setPot(c, v); return; }
+  if(c.type==="button" && k==="press"){ setPressed(c, !!v); return; }
+  if(k==="pos"){ let guard = 0; while((c.encPos||0) !== v && guard++ < 4) encoderTurn(c, v > (c.encPos||0) ? 1 : -1); return; }
+  const d = (COMP[c.type].ctrl || []).find(x => x.k===k); if(!d) return;
+  if(cv(c,k)===v) return; c.v = c.v || {}; c.v[k] = v;
+  if(d.type==="toggle"){ Object.values(c.nums).forEach(n => inputChanged(n)); const b = pane.querySelector(`[data-tog="${c.id}"][data-k="${k}"]`); if(b) b.setAttribute("aria-pressed", !!v); }
+  else { const r = pane.querySelector(`[data-rng="${c.id}"][data-k="${k}"]`); if(r && document.activeElement!==r) r.value = v; const o = document.getElementById(`o_${c.id}_${k}`); if(o) o.textContent = v + " " + (d.unit||""); }
+}
+function startScen(){
+  const L = lab(), S = scenFor(L); if(!S) return;
+  if(!rt.running) startSim();
+  if(!rt.running) return;
+  scen = {S, pid: current.id + "|" + L.proj, s0: performance.now(), last: performance.now()};
+  syncHud(true);
+}
+function stopScen(msg){
+  if(!scen) return; scen = null;
+  const m = document.getElementById("scenMsg"); if(m){ m.textContent = msg || ""; m.hidden = !msg; if(msg) setTimeout(() => { if(!scen) m.hidden = true; }, 3500); }
+  document.getElementById("testHud").classList.remove("rev");
+  syncHud(true);
+}
+function scenFrame(now){
+  if(!scen) return;
+  const L = lab();
+  if(!rt.running || scen.pid !== current.id + "|" + L.proj || activeTab!=="lab"){ stopScen(); return; }
+  if(rt.paused) scen.s0 += now - scen.last; scen.last = now;
+  const t = (now - scen.s0)/1000;
+  if(t > scen.S.dur){ stopScen("Test terminé. Relancez-le ou bougez les curseurs vous-même."); return; }
+  const r = scen.S.f(t);
+  for(const [sel, k, v] of r.set){
+    const list = sel[0]==="#" ? L.comps.filter(c => c.id===sel.slice(1)) : L.comps.filter(c => c.type===sel && !c.off);
+    list.forEach(c => setCv(c, k, v));
+  }
+  const m = document.getElementById("scenMsg"); m.hidden = false; if(m.textContent !== r.msg) m.textContent = r.msg;
+  document.getElementById("testHud").classList.toggle("rev", r.mode==="R");
+  const pb = document.getElementById("scenProg"); if(pb) pb.style.width = Math.min(100, t/scen.S.dur*100) + "%";
+}
+
+/* -- tableau de bord (capteurs et sorties en direct) -- */
+const HUD_ROWS = {
+  hcsr04:c => ({lab:"Distance", val:`${Math.round(cv(c,"d"))} cm`, bar:1 - Math.min(1, cv(c,"d")/200), col:sevCol(cv(c,"d"))}),
+  pir:c => ({lab:"Mouvement", val: cv(c,"on") ? "détecté" : "aucun", dot: cv(c,"on") ? "#d1352b" : ""}),
+  ir:c => ({lab:"Obstacle IR", val: cv(c,"on") ? "oui" : "non", dot: cv(c,"on") ? "#d1352b" : ""}),
+  ldr:c => ({lab:"Lumière", val:`${Math.round(cv(c,"l"))} %`, bar:cv(c,"l")/100, col:"#c99a06"}),
+  dht22:c => ({lab:"Température", val:`${(+cv(c,"t")).toFixed(1)} °C · ${Math.round(cv(c,"h"))} %`, bar:(cv(c,"t")+40)/120, col:tempCol(cv(c,"t"))}),
+  dht11:c => ({lab:"Température", val:`${Math.round(cv(c,"t"))} °C · ${Math.round(cv(c,"h"))} %`, bar:cv(c,"t")/50, col:tempCol(cv(c,"t"))}),
+  lm35:c => ({lab:"Température", val:`${(+cv(c,"t")).toFixed(1)} °C`, bar:cv(c,"t")/110, col:tempCol(cv(c,"t"))}),
+  mq2:c => ({lab:"Gaz", val:`${Math.round(cv(c,"g"))} %`, bar:cv(c,"g")/100, col: cv(c,"g") > 40 ? "#d1352b" : "#e8770e"}),
+  sound:c => ({lab:"Son", val:`${Math.round(cv(c,"s"))} %`, bar:cv(c,"s")/100, col:"#8a4fd6"}),
+  soil:c => ({lab:"Humidité du sol", val:`${Math.round(cv(c,"m"))} %`, bar:cv(c,"m")/100, col: cv(c,"m") < 30 ? "#a0522d" : "#2a6fd6"}),
+  tilt:c => ({lab:"Inclinaison", val: cv(c,"on") ? "inclinée" : "à plat", dot: cv(c,"on") ? "#e8770e" : ""}),
+  touch:c => ({lab:"Tactile", val: cv(c,"on") ? "touché" : "—", dot: cv(c,"on") ? "#d1352b" : ""}),
+  pot:c => ({lab:"Potentiomètre", val:`${Math.round(c.value*100)} %`, bar:c.value, col:"#2a6fd6"}),
+  button:c => ({lab:"Bouton", val: c.pressed ? "appuyé" : "relâché", dot: c.pressed ? "#2a6fd6" : ""}),
+  joystick:c => ({lab:"Joystick", val:`X ${Math.round(cv(c,"x"))} · Y ${Math.round(cv(c,"y"))}`}),
+  encoder:c => ({lab:"Encodeur", val:`${c.encPos||0} crans`}),
+  led:c => { const on = pinLevel(c.nums.a) > 0.05 && !c.burnt; return {lab:`LED ${({red:"rouge",green:"verte",blue:"bleue",yellow:"jaune",white:"blanche"})[c.color||"red"] || ""}`, val: c.burnt ? "grillée" : on ? (pinLevel(c.nums.a) < 0.98 ? `allumée ${Math.round(pinLevel(c.nums.a)*100)} %` : "allumée") : "éteinte", dot: on ? (LED_COLORS[c.color||"red"] || [])[1] || "#d1352b" : "", out:true}; },
+  buzzerA:c => { const on = pinLevel(c.nums.s) > 0.5 && rt.running; return {lab:"Buzzer", val: on ? "BIP" : "silence", dot: on ? "#e8770e" : "", out:true}; },
+  buzzer:c => { const f = hw.tones.get(c.nums.s) || 0; return {lab:"Buzzer", val: f > 0 && rt.running ? `${Math.round(f)} Hz` : "silence", dot: f > 0 && rt.running ? "#e8770e" : "", out:true}; },
+  relay:c => { const on = pinLevel(c.nums.s) > 0.5; return {lab:"Relais", val: on ? "activé" : "repos", dot: on ? "#1f8a4c" : "", out:true}; },
+  fan:c => { const v = Math.abs(pinLevel(c.nums.ina) - pinLevel(c.nums.inb)); return {lab:"Ventilateur", val: v > 0.05 ? `tourne ${Math.round(v*100)} %` : "arrêté", dot: v > 0.05 ? "#2a6fd6" : "", out:true}; },
+  servo:c => { const V = bench && bench.userData.comps[c.id]; return {lab:"Servo", val:`${Math.round(V ? V.angle : 90)}°`, out:true}; },
+  traffic:c => { const r = pinLevel(c.nums.r) > 0.5, y = pinLevel(c.nums.y) > 0.5, g = pinLevel(c.nums.g) > 0.5; return {lab:"Feu", val: [r && "rouge", y && "orange", g && "vert"].filter(Boolean).join(" + ") || "éteint", dot: r ? "#d1352b" : y ? "#e8a10e" : g ? "#1f8a4c" : "", out:true}; },
+  stepper:c => ({lab:"Pas à pas", val:`${Math.round(((c.rotor||0)*180/Math.PI) % 360)}°`, out:true})
+};
+function syncHud(force){
+  const hud = document.getElementById("testHud"); if(!hud) return;
+  const L = labs[current?.id];
+  const show = activeTab==="lab" && L && !vehicleOf(L) && L.comps.some(c => !c.off && HUD_ROWS[c.type]);
+  hud.hidden = !show; if(!show){ hudKey = ""; return; }
+  const key = current.id + "|" + L.proj + "|" + L.comps.filter(c => !c.off).map(c => c.id).join(",") + "|" + !!scen;
+  if(key!==hudKey || force){
+    hudKey = key; const S = scenFor(L);
+    const rows = L.comps.filter(c => !c.off && HUD_ROWS[c.type]).sort((a,b) => (HUD_ROWS[a.type](a).out ? 1 : 0) - (HUD_ROWS[b.type](b).out ? 1 : 0));
+    const hasHc = rows.some(c => c.type==="hcsr04");
+    document.getElementById("tbBody").innerHTML =
+      (hasHc ? `<div class="park" aria-hidden="true"><svg viewBox="0 0 120 64" width="120" height="64"><rect x="44" y="4" width="32" height="22" rx="6" fill="currentColor" opacity=".85"/><rect x="48" y="8" width="24" height="7" rx="2" fill="var(--panel)" opacity=".7"/>${[0,1,2,3].map(i => `<path id="arc${i}" d="M${30-i*7} ${34+i*7} Q60 ${44+i*9} ${90+i*7} ${34+i*7}" fill="none" stroke-width="5" stroke-linecap="round"/>`).join("")}</svg><b id="parkTxt">—</b></div>` : "") +
+      rows.map(c => `<div class="tb-row${HUD_ROWS[c.type](c).out ? " out" : ""}" data-r="${c.id}"><span class="tb-dot"></span><span class="tb-l"></span><span class="tb-v"></span><span class="tb-bar"><i></i></span></div>`).join("");
+    const b = document.getElementById("btnScen");
+    b.hidden = !S; if(S) b.innerHTML = scen ? "■ Arrêter le test" : `▶ Tester : ${esc(S.label)}`;
+    b.setAttribute("aria-pressed", !!scen);
+    document.getElementById("scenBar").hidden = !scen;
+  }
+  const now = performance.now(); if(!force && now - hudT < 90) return; hudT = now;
+  for(const el of document.querySelectorAll("#tbBody .tb-row")){
+    const c = L.comps.find(x => x.id===el.dataset.r); if(!c) continue; const r = HUD_ROWS[c.type](c);
+    el.querySelector(".tb-l").textContent = r.lab; el.querySelector(".tb-v").textContent = r.val;
+    const dot = el.querySelector(".tb-dot"); dot.style.background = r.dot || "transparent"; dot.style.borderColor = r.dot || "var(--line)";
+    const bar = el.querySelector(".tb-bar"); bar.hidden = r.bar===undefined; if(r.bar!==undefined){ bar.firstChild.style.width = Math.max(0, Math.min(1, r.bar))*100 + "%"; bar.firstChild.style.background = r.col || "var(--accent)"; }
+  }
+  const hc = L.comps.find(c => c.type==="hcsr04" && !c.off);
+  if(hc){ const d = cv(hc,"d"), lim = [120,60,30,15], cols = ["#1f8a4c","#c99a06","#e8770e","#d1352b"];
+    lim.forEach((x, i) => { const a = document.getElementById("arc"+i); if(a){ a.setAttribute("stroke", d < x ? cols[i] : "var(--line)"); } });
+    const t = document.getElementById("parkTxt"); if(t){ t.textContent = `${Math.round(d)} cm`; t.style.color = sevCol(d); } }
+}
+document.getElementById("btnScen").addEventListener("click", () => { if(scen) stopScen(); else startScen(); });
+document.getElementById("tbToggle").addEventListener("click", e => { const h = document.getElementById("testHud"); const on = h.classList.toggle("min"); e.currentTarget.setAttribute("aria-expanded", !on); });
 
 function reassemble(){
   const now = performance.now();
@@ -5242,8 +5546,8 @@ const focusTarget = new THREE.Vector3();
 function select(id, fromList){
   if(selectedId && selectedId!==id) setGlow(selectedId,false);
   selectedId = id;
-  if(id){ setGlow(id,true); const g = partGroups.find(x => x.userData.id===id); focusTarget.set(g.position.x,0,g.position.z).multiplyScalar(0.6); }
-  else focusTarget.set(0,0,0);
+  if(id){ setGlow(id,true); const g = partGroups.find(x => x.userData.id===id);
+    if(g && activeTab!=="lab"){ const c = new THREE.Box3().setFromObject(g).getCenter(new THREE.Vector3()), tg = controls.target.clone().lerp(c, 0.6), off = camera.position.clone().sub(controls.target); camTo(tg.clone().add(off), tg, 500); } }
   if(id && activeTab!=="parts" && activeTab!=="lab"){ setTab("parts"); } else if(activeTab==="parts") renderPane();
   if(!fromList && innerWidth<=900 && id) document.querySelector(".panel").scrollIntoView({behavior:reduceMotion?"auto":"smooth",block:"start"});
 }
@@ -5357,8 +5661,8 @@ function frame(now){
     g.position.y = (u.baseY||0) + (u.baseY ? -1 : 1)*(u.from*(1-ease(t)) + u.ex);
   });
   labFrame(now);
-  controls.target.lerp(focusTarget, 0.06);
   camStep(now);
+  if(scene.fog){ const dist = camera.position.distanceTo(controls.target); scene.fog.near = Math.max(45, dist*1.15); scene.fog.far = scene.fog.near + 90; }
   if(autoSpin && boardGroup) boardGroup.rotation.y += 0.004;
   controls.update();
   renderer.render(scene,camera);
