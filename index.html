@@ -602,7 +602,7 @@ scene.add(new THREE.HemisphereLight(0xffffff,0x40463f,0.25));
 const sun = new THREE.DirectionalLight(0xfff4e6,1.5);
 sun.position.set(5,12,7); sun.castShadow = true;
 sun.shadow.mapSize.set(4096,4096); sun.shadow.radius = 4;
-Object.assign(sun.shadow.camera,{left:-9,right:9,top:9,bottom:-9,near:1,far:40});
+Object.assign(sun.shadow.camera,{left:-16,right:16,top:16,bottom:-16,near:1,far:50});
 sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.01;
 scene.add(sun);
 const fill = new THREE.DirectionalLight(0xcfe0ff,0.35); fill.position.set(-6,4,-5); scene.add(fill);
@@ -620,9 +620,9 @@ const matTex = (function(){
     g.strokeStyle = bold ? "rgba(214,232,205,0.55)" : "rgba(190,220,190,0.28)"; g.lineWidth = bold ? 2.4 : 1.2;
     g.beginPath(); g.moveTo(p,0); g.lineTo(p,1024); g.moveTo(0,p); g.lineTo(1024,p); g.stroke();
   }
-  const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(3,3); t.anisotropy = 8; return t;
+  const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(12,12); t.anisotropy = 8; return t;
 })();
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(60,60), new THREE.MeshStandardMaterial({map:matTex,roughness:0.92,metalness:0}));
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(240,240), new THREE.MeshStandardMaterial({map:matTex,roughness:0.92,metalness:0}));
 ground.rotation.x = -Math.PI/2; ground.position.y = GROUND_Y; ground.receiveShadow = true; scene.add(ground);
 function syncFog(){ const c = getComputedStyle(document.documentElement).getPropertyValue("--stage-b").trim() || "#0b1014"; scene.fog = new THREE.Fog(c, 45, 120); }
 syncFog(); matchMedia("(prefers-color-scheme: dark)").addEventListener("change", syncFog);
@@ -1626,6 +1626,7 @@ function transpileCpp(src){
   });
   // objets de bibliothèques
   const LIBS = "Servo|Adafruit_SSD1306|DHT|LiquidCrystal_I2C|Adafruit_NeoPixel|TM1637Display|LedControl|Stepper";
+  c = c.replace(new RegExp(`(^|[;{}]|\\n)(\\s*)(${LIBS})\\s+(\\w+)\\s*\\[\\s*(\\w+)\\s*\\]\\s*;`, "g"), (m, a, sp, cls, name, n) => `${a}${sp}let ${name} = Array.from({length:${n}}, () => new ${cls}());`);
   c = c.replace(new RegExp(`(^|[;{}]|\\n)(\\s*)(${LIBS})\\s+(\\w+)\\s*=\\s*\\3\\s*\\(([^;]*)\\)\\s*;`, "g"), (m, a, sp, cls, name, args) => `${a}${sp}let ${name} = new ${cls}(${args||""});`);
   c = c.replace(new RegExp(`(^|[;{}]|\\n)(\\s*)(${LIBS})\\s+(\\w+)\\s*(?:\\(([^;]*)\\))?\\s*;`, "g"), (m, a, sp, cls, name, args) => `${a}${sp}let ${name} = new ${cls}(${args||""});`);
   c = c.replace(/\b(millis|micros)\(\)\s*\/\s*(\d+)\b(?![\w.])/g, "__i($1() / $2)");
@@ -1857,7 +1858,7 @@ function transpilePy(src, envNames){
   const stack = [{ind:0, fn:null}];
   const scopes = [{names:new Set(), globals:new Set(), params:new Set(), line:-1}];
   let lastIdx = -1, expectBlock = false;
-  const close = () => { const top = stack.pop(); out[lastIdx] += " }"; if(top.fn){ const sc = scopes.pop(); finishScope(sc); } };
+  const close = () => { const top = stack.pop(); out[lastIdx] += top.fn ? " };" : " }"; if(top.fn){ const sc = scopes.pop(); finishScope(sc); } };
   const finishScope = sc => {
     const names = [...sc.names].filter(n => !sc.globals.has(n) && !sc.params.has(n) && !(sc===scopes[0] && envNames.has(n)));
     if(names.length) out[sc.line] = (sc.line<0 ? "" : out[sc.line]) + ` let ${names.join(", ")};`;
@@ -2006,6 +2007,8 @@ async function pump(g){
     if(rt.timers.length && rt.timers[0].due <= target){
       const t = rt.timers.shift(); rt.now = Math.max(rt.now, t.due); t.fn();
       for(let k=0;k<40;k++) await null;   // laisse le programme avancer jusqu'à sa prochaine attente
+      // programme en boucle d'interrogation (sans delay) : il doit voir chaque changement d'état
+      if(performance.now() - (rt.pollT||0) < 60) await macrotask();
       if(performance.now() - frameT > 12){ await new Promise(r => setTimeout(r, 0)); frameT = performance.now(); }
     } else {
       rt.now = Math.max(rt.now, rt.timers.length ? Math.min(target, rt.timers[0].due) : target);
@@ -2203,9 +2206,10 @@ function baseEnv(g){
     alive();
     if(rt.paused){ await waitResume(); alive(); }
     if(performance.now() - rt.lastYield > 25){
-      rt.lastYield = performance.now(); await macrotask(); alive();
+      rt.lastYield = rt.pollT = performance.now(); await macrotask(); alive();
       if(rt.paused){ await waitResume(); alive(); }
-      rt.now = Math.max(rt.now, Math.min(simTarget(), rt.timers.length ? rt.timers[0].due : Infinity));
+      // un programme occupé n'avance l'horloge que par petits pas (sinon un affichage lent fausserait la simulation)
+      rt.now = Math.max(rt.now, Math.min(simTarget(), rt.now + 5, rt.timers.length ? rt.timers[0].due : Infinity));
     }
   };
   E.__sleepMs = (ms) => { alive(); ms = Math.max(0, +ms || 0); return new Promise(res => addTimer(rt.now + ms, () => { if(g===rt.gen) res(); })); };
@@ -2398,7 +2402,7 @@ function micropythonEnv(g){
   function PWM(pin, ...a){
     const o = kwOf(a), n = pnum(pin), st = pinState(n); st.mode = 1; let f = o.freq || 1000, d = o.duty_u16 || 0;
     const apply = () => { st.freq = f;
-      if(compsOn("servo", n).length && f>=40 && f<=400){ const us = d/65535 * 1e6/f; if(us>=300 && us<=2800) hw.servos.set(n, us); }
+      if((compsOn("servo", n).length || compsOn("drone", n).length) && f>=40 && f<=400){ const us = d/65535 * 1e6/f; if(us>=300 && us<=2800) hw.servos.set(n, us); }
       st.duty = d===0 ? null : d/65535; st.out = d>=65535 ? 1 : 0;
       setTone(n, compsOn("buzzer", n).length && d>0 && d<65535 ? f : 0); logPin(n); };
     apply();
@@ -2554,6 +2558,7 @@ function startSim(){
   }
   resetHw();
   const g = ++rt.gen;
+  resetVehicle(L); vehPrev = null;
   Object.assign(rt, {running:true, paused:false, now:0, timers:[], baseSim:0, baseReal:performance.now(), lastYield:performance.now(), ended:false, speedHist:[]});
   audioInit(); if(audio.ctx && audio.ctx.state==="suspended") audio.ctx.resume();
   L.serial = ""; const s = document.getElementById("serial"); if(s) s.textContent = "";
@@ -2638,7 +2643,7 @@ function hdrPinPos(label, hdr){ const f = findPin(label, hdr) || findPin(label);
 // emplacement de la carte sur le tapis (dans le simulateur)
 function applyBoardPos(){
   if(!boardBody) return;
-  const P = activeTab==="lab" && labs[current.id] ? labs[current.id].boardPos : {x:0, z:0, rot:0};
+  const L = labs[current.id], P = activeTab==="lab" && L && !vehicleOf(L) ? L.boardPos : {x:0, z:0, rot:0};
   boardBody.position.set(P.x, 0, P.z); boardBody.rotation.y = P.rot; boardBody.updateMatrix();
 }
 function boardPreset(where){
@@ -2677,7 +2682,7 @@ function layoutComps(L){
   const placed = [];
   L.comps.forEach(c => { c.off = false; });
   for(const c of L.comps){
-    if(COMP[c.type].place==="front"){ c.col = undefined; continue; }
+    if(COMP[c.type].place==="front" || COMP[c.type].place==="vehicle"){ c.col = undefined; continue; }
     const others = placed;
     const ok = st => { const S = bbSpec(), end = st + compSpan(c) - 1; return st>=0 && end <= S.cols-3 && !others.some(o => st <= o.col + compSpan(o) - 1 && o.col <= end); };
     if(c.col===undefined || !ok(c.col)){ let st = 0; const S = bbSpec(); while(st <= S.cols && !ok(st)) st++; if(ok(st)) c.col = st; else { c.off = true; continue; } }
@@ -3017,11 +3022,13 @@ function buildBench(){
       const O3 = oled3D([H(cc,9), H(cc+1,9), H(cc+2,9), H(cc+3,9)]); bench.add(O3.g); Object.assign(V, O3);
       bench.add(flatJumper(H(cc,5), RL("top","-",cc), "#1d1d20"), flatJumper(H(cc+1,5), RL("top","+",cc+1), "#d3271f"));
       W(hdrPinPos(I.scl.label), H(cc+2,6), wc(c,"scl")); W(hdrPinPos(I.sda.label), H(cc+3,6), wc(c,"sda"));
+    } else if(COMP[c.type].place==="vehicle"){
+      buildVehicle(c, {W, boardPin, bench, V});
     } else if(XC[c.type]){
       if(buildXModule(c, XC[c.type], {W, boardPin, wc, bench, V})) usesBottom = true;
     }
     bench.userData.comps[c.id] = V;
-    if(V.g) bench.userData.moves.push({obj:V.g, comp:c, kind: COMP[c.type].place==="front" ? "movefront" : "move"});
+    if(V.g && COMP[c.type].place!=="vehicle") bench.userData.moves.push({obj:V.g, comp:c, kind: COMP[c.type].place==="front" ? "movefront" : "move"});
   });
   bench.userData.hits.push(...bench.userData.moves);
   if(usesBottom){
@@ -3035,13 +3042,16 @@ function buildBench(){
   }
   bench.traverse(o => { if(o.isMesh && !o.isInstancedMesh && !o.material.transparent && o.material.visible!==false){ o.castShadow = true; o.receiveShadow = true; } });
   bench.visible = activeTab==="lab";
+  syncArena();
 }
 
 function frameLab(){
   if(!boardGroup) return;
   const box3 = new THREE.Box3().setFromObject(boardGroup), c = box3.getCenter(new THREE.Vector3()), sph = box3.getBoundingSphere(new THREE.Sphere());
-  const fv = camera.fov*Math.PI/180, fh = 2*Math.atan(Math.tan(fv/2)*camera.aspect), fit = sph.radius / Math.sin(Math.min(fv, fh)/2) * 0.9;
+  const fv = camera.fov*Math.PI/180, fh = 2*Math.atan(Math.tan(fv/2)*camera.aspect); let fit = sph.radius / Math.sin(Math.min(fv, fh)/2) * 0.9;
+  const veh = vehicleOf(labs[current.id]);
   const dir = new THREE.Vector3(0.06, 1.0, 0.85).normalize();
+  if(veh){ fit *= veh.type==="rover" ? 2.4 : 2.0; }
   camera.position.copy(c).addScaledVector(dir, fit);
   focusTarget.set(c.x, GROUND_Y + 0.4, c.z + 0.15); controls.target.copy(focusTarget); controls.update();
 }
@@ -3051,6 +3061,8 @@ let lastHud = 0;
 const tmpC = new THREE.Color();
 function labFrame(now){
   const L = labs[current?.id]; if(!L) return;
+  vehicleStep(now);
+  if(!vehicleOf(L)) for(const c of L.comps) if(c.autoD!==undefined) c.autoD = undefined;
   const I = io();
   if(bench && bench.visible){
     for(const c of L.comps){
@@ -3106,13 +3118,22 @@ const labs = {};
 let compSeq = 0;
 function lab(){ return labs[current.id] || (labs[current.id] = newLab()); }
 function newLab(){ const L = {proj:"blink", lang:io().lang[0], comps:[], code:"", dirty:false, serial:"", console:[], errLine:null, bb:{size:"half", color:"white", wire:"dupont"}, boardPos:{x:0, z:0, rot:0}}; loadProject(L, "blink"); return L; }
-function projects(){ const I = io(); return Object.entries(PROJ).filter(([k,p]) => !(I.noAdc && p.needAdc) && !(current.id==="rpi4" && p.noRpi)); }
+function projects(lang){ const I = io(); lang = lang || (labs[current.id] ? labs[current.id].lang : I.lang[0]);
+  const nAdc = I.pins.filter(x => x.caps.has("adc")).length, nPwm = I.pins.filter(x => x.caps.has("pwm")).length;
+  const fits = p => { const list = (current.id==="rpi4" && p.rpiComps) || p.comps; let tot = 0, adc = 0, pwm = 0;
+    for(const [t] of list){ for(const d of COMP[t].pins){ if(d.need==="adc") adc++; else tot++; if(d.need==="pwm") pwm++; } }
+    const nDig = I.pins.filter(x => x.caps.has("d") || x.caps.has("in")).length;
+    return tot <= nDig && tot + adc <= I.pins.length && adc <= nAdc && pwm <= nPwm; };
+  return Object.entries(PROJ).filter(([k,p]) => !(I.noAdc && p.needAdc) && !(current.id==="rpi4" && p.noRpi) && (!p.tpl || p.tpl[lang]) && fits(p)); }
 function makeComp(type, opt={}){ return Object.assign({id:"c"+(++compSeq), type, pins:{}, nums:{}, value:0.5, pressed:false, R:220, color:"red"}, opt); }
 function loadProject(L, proj){
   L.proj = proj; const P = PROJ[proj], I = io();
   const list = (current.id==="rpi4" && P.rpiComps) || P.comps;
   L.comps = list.filter(([t]) => !(t==="pot" && I.noAdc)).map(([t, o]) => makeComp(t, o));
-  autoAssign(L); L.dirty = false; L.code = template(L) || L.code; L.errLine = null;
+  if(P.bb) L.bb.size = P.bb;
+  L.boardPos = {x:0, z:0, rot:0}; resetVehicle(L);
+  autoAssign(L); L.dirty = false; const code = template(L); L.errLine = null;
+  if(code) L.code = code; else if(P.tpl) setTimeout(() => consoleMsg(`La ${current.name} n'a pas assez de broches libres pour ce projet : le code n'a pas pu être généré.`, "warn"), 0);
 }
 const pinFits = (p, need) => need==="adc" ? p.caps.has("adc") : need==="pwm" ? p.caps.has("pwm") : need==="in" ? (p.caps.has("d") || p.caps.has("in")) : p.caps.has("d");
 function autoAssign(L){
@@ -3146,10 +3167,13 @@ function tokens(L){
   for(const c of L.comps){
     if(c.type==="rgb"){ if(T.r===undefined){ T.r = tok(c.nums.r); T.g = tok(c.nums.g); T.b = tok(c.nums.b); } }
     else if(COMP[c.type].pins.length && T[c.type]===undefined) T[c.type] = tok(c.nums[COMP[c.type].pins[0].k]);
+    for(const d of COMP[c.type].pins){ const key = c.type + "." + d.k; if(T[key]===undefined && c.nums[d.k]!==undefined && c.nums[d.k]>=0) T[key] = tok(c.nums[d.k]); }
   }
   return T;
 }
 function template(L){
+  const P = PROJ[L.proj];
+  if(P && P.tpl){ const f = P.tpl[L.lang]; if(!f) return null; const T = tokens(L); if((P.need||[]).some(k => !T[k])) return null; return f(T); }
   const T = tokens(L), f = L.lang==="arduino" ? tplArduino : L.lang==="micropython" ? tplMicroPython : tplGpiozero;
   const need = {blink:["led"], fade:["led"], button:["led","button"], pot:["pot","led"], servo: current.id==="rpi4" ? ["servo"] : ["pot","servo"], buzzer:["buzzer","button"], rgb:["r","g","b"], oled:["pot"]}[L.proj] || [];
   if(need.some(k => !T[k])) return null;
@@ -3199,7 +3223,7 @@ function renderLab(){
       <button class="wk-ic" id="wkMute" type="button" aria-label="${audio.muted ? "Activer le son" : "Couper le son"}" title="Son du buzzer">${audio.muted ? ICON.mute : ICON.sound}</button>
     </div>
     <div class="wk-head">
-      <label>Projet<select id="wkProj">${projects().map(([k,p]) => `<option value="${k}" ${k===L.proj?"selected":""}>${esc(p.name)}</option>`).join("")}</select></label>
+      <label>Projet<select id="wkProj">${[["base","Premiers pas"],["capteurs","Capteurs et afficheurs"],["avance","Projets avancés : véhicules"]].map(([gk, gn]) => { const it = projects().filter(([k,p]) => p.group===gk); return it.length ? `<optgroup label="${gn}">${it.map(([k,p]) => `<option value="${k}" ${k===L.proj?"selected":""}>${esc(p.name)}</option>`).join("")}</optgroup>` : ""; }).join("")}</select></label>
       ${I.lang.length>1 ? `<label>Langage<select id="wkLang">${I.lang.map(l => `<option value="${l}" ${l===L.lang?"selected":""}>${LANG_NAME[l]}</option>`).join("")}</select></label>` : `<label>Langage<span class="wk-fixed">${LANG_NAME[L.lang]}</span></label>`}
     </div>
     <p class="wk-desc">${esc(P.desc)}</p>
@@ -3267,8 +3291,10 @@ function bindLab(){
   document.getElementById("wkMute").onclick = e => { audio.muted = !audio.muted; audioSync(); e.currentTarget.innerHTML = audio.muted ? ICON.mute : ICON.sound; e.currentTarget.setAttribute("aria-label", audio.muted ? "Activer le son" : "Couper le son"); };
   document.getElementById("wkProj").onchange = e => { stopSim(); loadProject(L, e.target.value); L.serial = ""; L.console = []; buildBench(); renderLab(); };
   const lg = document.getElementById("wkLang");
-  if(lg) lg.onchange = e => { stopSim(); L.lang = e.target.value; L.dirty = false; L.code = template(L) || L.code; L.serial = ""; L.console = []; renderLab(); };
+  if(lg) lg.onchange = e => { stopSim(); L.lang = e.target.value; L.dirty = false; L.serial = ""; L.console = [];
+    if(!projects().some(([k]) => k===L.proj)){ loadProject(L, "blink"); buildBench(); } else L.code = template(L) || L.code; renderLab(); };
   document.getElementById("wkAdd").onchange = e => { const t = e.target.value; if(!t) return;
+    if(COMP[t].place==="vehicle" && vehicleOf(L)){ consoleMsg("Un seul châssis de véhicule à la fois : retirez d'abord le rover ou le drone.", "warn"); e.target.value = ""; return; }
     const probe = makeComp(t); L.comps.push(probe); layoutComps(L); L.comps.pop();
     if(probe.off){ consoleMsg("Plus de place sur la breadboard : retirez un composant, rapprochez-les ou prenez une breadboard plus grande.", "warn"); e.target.value = ""; return; }
     if(t==="oled" && L.comps.some(c => c.type==="oled")){ consoleMsg("Un seul écran OLED peut être branché sur le bus I²C à l'adresse 0x3C.", "warn"); e.target.value = ""; return; }
@@ -3438,7 +3464,9 @@ function labTabChanged(){
   } else if(labWasActive){
     if(rt.running) stopSim();
     if(bench) bench.visible = false;
-    applyBoardPos();
+    applyBoardPos(); syncArena(); vehPrev = null;
+    if(boardGroup){ boardGroup.position.set(0,0,0); boardGroup.rotation.set(0,0,0); }
+    sun.position.set(5,12,7); sun.target.position.set(0,0,0); sun.target.updateMatrixWorld();
     const b = current, span = Math.max(b.pcb.w, b.pcb.d*1.3);
     camera.position.set(span*0.55, span*0.9+1.6, span*1.05+2.2); focusTarget.set(0,0,0);
   }
@@ -3574,10 +3602,11 @@ XC.slidepot.ana = c => cv(c,"p")/100;
 // rotation de l'encodeur : séquence en quadrature sur CLK et DT
 function encoderTurn(c, dir){
   c.enc = c.enc || {clk:1, dt:1}; c.encPos = (c.encPos||0) + dir;
+  const t0 = Math.max(rt.now, c.encBusy || 0); c.encBusy = t0 + 130;
   const seq = dir>0 ? [[0,1],[0,0],[1,0],[1,1]] : [[1,0],[0,0],[0,1],[1,1]];
   seq.forEach(([a,b], i) => {
     const apply = () => { c.enc.clk = a; c.enc.dt = b; inputChanged(c.nums.clk); inputChanged(c.nums.dt); };
-    if(rt.running && !rt.paused) addTimer(rt.now + 1 + i*2, apply); else apply();
+    if(rt.running && !rt.paused) addTimer(t0 + 1 + i*30, apply); else apply();
   });
 }
 
@@ -3862,8 +3891,8 @@ function addArduinoLibs(E, g, num){
     computeHeatIndex(t, h, f=true){ const T = f ? t : t*1.8 + 32; let hi = 0.5*(T + 61 + (T-68)*1.2 + h*0.094);
       if(hi > 79) hi = -42.379 + 2.04901523*T + 10.14333127*h - 0.22475541*T*h - 0.00683783*T*T - 0.05481717*h*h + 0.00122874*T*T*h + 0.00085282*T*h*h - 0.00000199*T*T*h*h;
       return f ? hi : (hi - 32)/1.8; } };
-  E.pulseIn = (p, state=1, timeout=1000000) => { const n = num(p), c = findComp("hcsr04","echo",n);
-    if(c && state){ const us = cv(c,"d")*58.3 + (Math.random()-.5)*20; return us > timeout ? 0 : Math.round(us); } return 0; };
+  E.pulseIn = (p, state=1, timeout=1000000) => { const n = num(p), c = findComp("hcsr04","echo",n) || findComp("drone","echo",n);
+    if(c && state){ const us = hcDist(c)*58.3 + (Math.random()-.5)*20; return us > timeout ? 0 : Math.round(us); } return 0; };
   E.pulseInLong = E.pulseIn;
   E.LiquidCrystal_I2C = class { constructor(addr=0x27, cols=16, rows=2){ this.addr = addr; }
     _s(){ if(!lab().comps.some(c => c.type==="lcd")) return null; return devState("lcd", () => ({buf:[Array(16).fill(" "), Array(16).fill(" ")], cx:0, cy:0, bl:false, disp:true, dirty:true})); }
@@ -3919,7 +3948,7 @@ function addMpLibs(E){
   E.dht = {DHT22: pin => mkDht(pn(pin), "dht22"), DHT11: pin => mkDht(pn(pin), "dht11")};
   function mkDht(n, type){ let t = 0, h = 0; return { measure(){ const c = lab().comps.find(c => c.type===type && c.nums.s===n); if(!c) throw new Error("OSError: [Errno 110] ETIMEDOUT (aucun capteur ne répond)"); t = cv(c,"t"); h = cv(c,"h"); if(type==="dht11"){ t = Math.round(t); h = Math.round(h); } },
     temperature: () => Math.round(t*10)/10, humidity: () => Math.round(h*10)/10 }; }
-  E.machine.time_pulse_us = E.time_pulse_us = (pin, level, timeout=1000000) => { const n = pn(pin), c = findComp("hcsr04","echo",n); if(!c || !level) return -1; const us = Math.round(cv(c,"d")*58.3 + (Math.random()-.5)*20); return us > timeout ? -1 : us; };
+  E.machine.time_pulse_us = E.time_pulse_us = (pin, level, timeout=1000000) => { const n = pn(pin), c = findComp("hcsr04","echo",n) || findComp("drone","echo",n); if(!c || !level) return -1; const us = Math.round(hcDist(c)*58.3 + (Math.random()-.5)*20); return us > timeout ? -1 : us; };
   E.neopixel = {NeoPixel: (pin, n) => { const p = pn(pin), arr = Array.from({length:n}, () => [0,0,0]);
     Object.defineProperty(arr, "write", {value(){ if(!findComp("neopixel","din",p)) return; const s = devState("neo:" + p, () => ({shown:[]})); s.shown = arr.map(v => [...v]); }});
     Object.defineProperty(arr, "fill", {value(c){ for(let i=0;i<n;i++) arr[i] = [...c]; }, writable:true});
@@ -3948,14 +3977,19 @@ function addGzLibs(E){
   class LineSensor extends InDev { constructor(p){ super(p, null, false); } set when_line(f){ this._on = f; } set when_no_line(f){ this._off = f; } }
   class DigitalInputDevice extends InDev { constructor(p, ...a){ const o = kwOf(a); super(p, o.pull_up ?? false, o.active_state ?? true); } }
   class DistanceSensor { constructor(...a){ const o = kwOf(a); this.e = pnum(o.echo ?? a[0]); this.t = pnum(o.trigger ?? a[1]); this.max = o.max_distance ?? 1; out(this.t, 0); }
-    get distance(){ const c = findComp("hcsr04","echo",this.e); if(!c) return this.max; return Math.min(this.max, cv(c,"d")/100); } get value(){ return this.distance/this.max; } close(){} }
+    get distance(){ const c = findComp("hcsr04","echo",this.e); if(!c) return this.max; return Math.min(this.max, hcDist(c)/100); } get value(){ return this.distance/this.max; } close(){} }
   class OutDev { constructor(p, ...a){ const o = kwOf(a); this.n = pnum(p); this.ah = o.active_high ?? true; this._v = 0; out(this.n, this.ah ? 0 : 1); }
     _set(v){ this._v = v; out(this.n, this.ah ? v : 1-v); } on(){ this._set(1); } off(){ this._set(0); } toggle(){ this._set(this._v ? 0 : 1); }
     get value(){ return this._v; } set value(v){ this._set(+v); } get is_active(){ return this._v>0; } close(){} }
   class PWMOutputDevice extends OutDev { set value(v){ this._set(Math.max(0, Math.min(1, +v))); } get value(){ return this._v; } }
-  class Motor { constructor(...a){ const o = kwOf(a); this.f = pnum(o.forward ?? a[0]); this.b = pnum(o.backward ?? a[1]); out(this.f,0); out(this.b,0); this._v = 0; }
-    forward(s=1){ this._v = s; out(this.f, s); out(this.b, 0); } backward(s=1){ this._v = -s; out(this.f, 0); out(this.b, s); } stop(){ this._v = 0; out(this.f,0); out(this.b,0); } reverse(){ this._v>0 ? this.backward(this._v) : this.forward(-this._v); }
+  class Motor { constructor(...a){ const o = kwOf(a); this.f = pnum(o.forward ?? a[0]); this.b = pnum(o.backward ?? a[1]); this.en = o.enable!==undefined ? pnum(o.enable) : null; out(this.f,0); out(this.b,0); if(this.en!==null) out(this.en, 0); this._v = 0; }
+    _d(fw, bw, s){ if(this.en!==null){ out(this.f, fw ? 1 : 0); out(this.b, bw ? 1 : 0); out(this.en, s); } else { out(this.f, fw ? s : 0); out(this.b, bw ? s : 0); } }
+    forward(s=1){ this._v = s; this._d(1, 0, s); } backward(s=1){ this._v = -s; this._d(0, 1, s); } stop(){ this._v = 0; this._d(0, 0, 0); } reverse(){ this._v>0 ? this.backward(this._v) : this.forward(-this._v); }
     get value(){ return this._v; } set value(v){ v>=0 ? this.forward(v) : this.backward(-v); } get is_active(){ return this._v!==0; } close(){} }
+  class Robot { constructor(...a){ const o = kwOf(a); const mk = m => Array.isArray(m) ? E.Motor(m[0], m[1]) : m; this.l = mk(o.left ?? a[0]); this.r = mk(o.right ?? a[1]); }
+    forward(s=1){ this.l.forward(s); this.r.forward(s); } backward(s=1){ this.l.backward(s); this.r.backward(s); }
+    left(s=1){ this.l.backward(s); this.r.forward(s); } right(s=1){ this.l.forward(s); this.r.backward(s); } stop(){ this.l.stop(); this.r.stop(); }
+    reverse(){ this.l.reverse(); this.r.reverse(); } get value(){ return [this.l.value, this.r.value]; } set value(v){ this.l.value = v[0]; this.r.value = v[1]; } close(){} }
   class TrafficLights { constructor(...a){ const o = kwOf(a); this.red = E.LED(o.red ?? a[0]); this.amber = E.LED(o.amber ?? o.yellow ?? a[1]); this.green = E.LED(o.green ?? a[2]); this.yellow = this.amber; }
     off(){ [this.red,this.amber,this.green].forEach(l => l.off()); } on(){ [this.red,this.amber,this.green].forEach(l => l.on()); } close(){} }
   class RotaryEncoder { constructor(...a){ const o = kwOf(a); this.a = pnum(o.a ?? a[0]); this.b = pnum(o.b ?? a[1]); this.steps = 0; this._r = null; this._cw = null; this._ccw = null;
@@ -3964,7 +3998,7 @@ function addGzLibs(E){
     set when_rotated(f){ this._r = f; } set when_rotated_clockwise(f){ this._cw = f; } set when_rotated_counter_clockwise(f){ this._ccw = f; } get value(){ return this.steps; } close(){} }
   const f = C => { const fn = (...a) => new C(...a); fn.prototype = C.prototype; return fn; };
   Object.assign(E, {RotaryEncoder:f(RotaryEncoder), MotionSensor:f(MotionSensor), LineSensor:f(LineSensor), DigitalInputDevice:f(DigitalInputDevice), DistanceSensor:f(DistanceSensor),
-    OutputDevice:f(OutDev), DigitalOutputDevice:f(OutDev), PWMOutputDevice:f(PWMOutputDevice), Motor:f(Motor), TrafficLights:f(TrafficLights)});
+    OutputDevice:f(OutDev), DigitalOutputDevice:f(OutDev), PWMOutputDevice:f(PWMOutputDevice), Motor:f(Motor), Robot:f(Robot), TrafficLights:f(TrafficLights)});
   Object.assign(E.gpiozero, {MotionSensor:E.MotionSensor, DistanceSensor:E.DistanceSensor, OutputDevice:E.OutputDevice, DigitalOutputDevice:E.DigitalOutputDevice, PWMOutputDevice:E.PWMOutputDevice, Motor:E.Motor, TrafficLights:E.TrafficLights, LineSensor:E.LineSensor, DigitalInputDevice:E.DigitalInputDevice});
 }
 
@@ -4152,6 +4186,949 @@ function exampleCode(c, lang){
   return null;
 }
 
+
+/* ============ Véhicules : rover et drone ============ */
+CATS.push(["vehicule","Véhicules (rover, drone)"]);
+XC.rover = {name:"Châssis rover 2 roues + L298N", cat:"vehicule", place:"vehicle", hdr:["ena","in1","in2","in3","in4","enb"], hl:["ENA","IN1","IN2","IN3","IN4","ENB"],
+  pins:[{k:"ena",need:"pwm",label:"ENA (vitesse gauche)"},{k:"in1",need:"out",label:"IN1"},{k:"in2",need:"out",label:"IN2"},{k:"in3",need:"out",label:"IN3"},{k:"in4",need:"out",label:"IN4"},{k:"enb",need:"pwm",label:"ENB (vitesse droite)"}], cols:0, w:0, h:0};
+XC.drone = {name:"Châssis drone quadrirotor", cat:"vehicule", place:"vehicle", hdr:["m1","m2","m3","m4","trig","echo"], hl:["M1","M2","M3","M4","Trig","Echo"],
+  pins:[{k:"m1",need:"out",label:"ESC M1 (avant gauche)"},{k:"m2",need:"out",label:"ESC M2 (avant droit)"},{k:"m3",need:"out",label:"ESC M3 (arrière droit)"},{k:"m4",need:"out",label:"ESC M4 (arrière gauche)"},{k:"trig",need:"out",label:"Trig (sonar)"},{k:"echo",need:"in",label:"Echo (sonar)"}], cols:0, w:0, h:0};
+COMP.rover = XC.rover; COMP.drone = XC.drone;
+XC.drone.dig = (c, k) => k==="echo" ? 0 : null;
+const vehicleOf = L => L && L.comps.find(c => COMP[c.type].place==="vehicle");
+const hcDist = c => { if(vehicleOf(labs[current.id])) vehicleStep(); return c.autoD ?? cv(c,"d"); };
+const ROVER_LIFT = 4.66, DRONE_LIFT = 2.9;
+
+function vehFootprint(){
+  const L = lab(), S = bbSpec(), {BZ} = benchGeom(), w = current.pcb.w, d = current.pcb.d;
+  const x0 = -Math.max(w, S.W)/2, x1 = -x0, z0 = -d/2, z1 = BZ + S.D/2;
+  return {x0, x1, z0, z1, cx:0, cz:(z0 + z1)/2, W:x1 - x0, D:z1 - z0};
+}
+function buildVehicle(c, ctx){
+  const {W, boardPin, bench, V} = ctx, g = new THREE.Group(); V.g = g; bench.add(g);
+  const F = vehFootprint(), top = GROUND_Y - 0.01;
+  if(c.type==="rover"){
+    const lift = ROVER_LIFT, gy = GROUND_Y - lift;   // niveau du sol dans le repère du véhicule
+    const pw = F.W + 6.2, pd = F.D + 2.4, pcx = F.cx + 1.6, pcz = F.cz;
+    const acry = new THREE.MeshPhysicalMaterial({color:"#f7d64a", transparent:true, opacity:0.62, roughness:0.12, clearcoat:1, depthWrite:false});
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(pw, 0.3, pd), acry); plate.position.set(pcx, top - 0.15, pcz); g.add(plate);
+    // moteurs TT jaunes et roues
+    const track = pw + 2.8; V.wheels = [];
+    for(const side of [1, -1]){
+      const x = pcx + side*(pw/2 - 1.4), z = F.z0 + 1.8, yc = gy + 3.25;
+      g.add(box(2.2, 2.2, 6.0, M("#f2c12e",{roughness:.55}), x, yc, z + 0.6));
+      g.add(cyl(0.12, 2.6, M("#efefef"), x + side*1.3, yc, z, 12)).children;
+      const wh = new THREE.Group(); wh.position.set(pcx + side*(pw/2 + 1.1), yc, z);
+      const tire = new THREE.Mesh(new THREE.CylinderGeometry(3.25, 3.25, 2.6, 36), M("#1b1b1d",{roughness:.85})); tire.rotation.z = Math.PI/2; wh.add(tire);
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(2.3, 2.3, 2.64, 6), M("#f2c12e",{roughness:.5})); hub.rotation.z = Math.PI/2; wh.add(hub);
+      for(let i=0;i<6;i++){ const sp = box(0.25, 3.8, 0.5, M("#e0ad1d"), side*1.34, 0, 0); sp.rotation.x = i*Math.PI/3; wh.add(sp); }
+      g.add(wh); V.wheels.push({wh, side});
+      g.add(tube([new THREE.Vector3(x, yc + 1.1, z + 3.4), new THREE.Vector3(x, top - 0.4, z + 3.8), new THREE.Vector3(pcx + pw/2 - 3.4, top + 0.6, F.z0 + 6.5)], 0.06, M(side>0 ? "#d3271f" : "#1d1d20"), 0.5));
+    }
+    // roue folle à l'avant
+    const cz = F.z1 + 0.4;
+    g.add(cyl(0.35, top - 0.3 - (gy + 1.0), M("#c9ccd0",{metalness:.9, roughness:.3}), pcx, (top - 0.3 + gy + 1.0)/2, cz, 16));
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.95, 20, 14), M("#d6d9dc",{metalness:1, roughness:.2})); ball.position.set(pcx, gy + 0.95, cz); g.add(ball);
+    // bloc de piles 2 × 18650 sous la plaque
+    g.add(box(4.2, 2.1, 7.6, M("#1d1d20"), pcx, top - 1.4, F.cz + 1.0));
+    for(const dx of [-1, 1]) g.add(cyl(0.9, 6.5, M("#2b74d6",{roughness:.4}), pcx + dx*0.95, top - 1.1, F.cz + 1.0, 20)).children;
+    // module L298N
+    const lx = F.x1 + 2.95, lz = F.z0 + 5.2, ly = top + 0.35;
+    g.add(box(4.3, 0.14, 4.3, M("#c02a24",{roughness:.55}), lx, ly, lz));
+    for(const [dx,dz] of [[-1,-1],[1,-1],[-1,1],[1,1]]) g.add(cyl(0.15, 0.35, M("#c7c2b8"), lx + dx*1.8, top + 0.17, lz + dz*1.8, 8));
+    const hs = new THREE.Group(); hs.position.set(lx - 0.2, ly + 0.07, lz + 0.3);
+    hs.add(box(1.6, 1.0, 2.3, M("#141416",{roughness:.4}), 0, 0.5, 0)); for(let i=0;i<7;i++) hs.add(box(0.08, 1.4, 2.3, M("#1d1d20",{metalness:.4}), -0.75 + i*0.25, 1.3, 0)); g.add(hs);
+    for(const dz of [-1.5, 1.5]) g.add(box(0.8, 0.8, 1.1, M("#1f6fd0"), lx + 1.55, ly + 0.47, lz + dz));
+    g.add(box(0.8, 0.8, 1.6, M("#1f6fd0"), lx - 1.5, ly + 0.47, lz - 1.4));
+    const pins = [];
+    c.type && XC.rover.hdr.forEach((k, i) => { const px = lx - 1.6 + 0.2, pz = lz + 0.45 + i*PITCH; g.add(box(0.064, 0.62, 0.064, GOLD(), px, ly + 0.35, pz)); pins.push(new THREE.Vector3(px, ly + 0.36, pz)); });
+    g.add(box(0.25, 0.25, 6*PITCH, BLACK(), lx - 1.4, ly + 0.2, lz + 0.45 + 2.5*PITCH));
+    XC.rover.hdr.forEach((k, i) => { if(c.nums[k]!==undefined) W(boardPin(c.nums[k]), pins[i], c.wires[k]); });
+    W(new THREE.Vector3(lx - 1.5, ly + 0.87, lz - 1.6), RL("top","-", 2), WIRE_PAL.noir);
+    c.track = track; c.vmax = 45;
+    // capteur à ultrasons du projet : son rayon part vers l'avant (+z)
+    return false;
+  }
+  // drone
+  const gy = GROUND_Y - DRONE_LIFT, cx = F.cx, cz = F.cz;
+  const carbon = canvasTex(256,256,(q) => { q.fillStyle = "#1a1b1e"; q.fillRect(0,0,256,256); q.strokeStyle = "rgba(255,255,255,.06)"; q.lineWidth = 6; for(let i=-256;i<512;i+=16){ q.beginPath(); q.moveTo(i,0); q.lineTo(i+256,256); q.stroke(); } });
+  const cm = M("#ffffff",{map:carbon, roughness:.35, metalness:.2});
+  const pw = F.W + 1.6, pd = F.D + 1.4;
+  g.add(box(pw, 0.22, pd, cm, cx, top - 0.11, cz));
+  const reach = Math.max(pw, pd)/2 + 4.4;
+  V.props = [];
+  [[-1, 1, "m1", 1], [1, 1, "m2", -1], [1, -1, "m3", 1], [-1, -1, "m4", -1]].forEach(([sx, sz, k, dir]) => {
+    const mx = cx + sx*reach*0.72, mz = cz + sz*reach*0.72;
+    const arm = box(Math.hypot(mx - cx, mz - cz), 0.35, 0.9, cm, (mx + cx)/2, top - 0.3, (mz + cz)/2); arm.rotation.y = -Math.atan2(mz - cz, mx - cx); g.add(arm);
+    g.add(cyl(0.95, 1.1, M("#2a2b2f",{metalness:.6, roughness:.3}), mx, top + 0.3, mz, 28));
+    g.add(cyl(0.9, 0.2, M(k==="m1"||k==="m2" ? "#d3271f" : "#dcdcdc"), mx, top + 0.9, mz, 28));
+    const prop = new THREE.Group(); prop.position.set(mx, top + 1.1, mz);
+    prop.add(cyl(0.3, 0.3, M("#c9ccd0",{metalness:.9}), 0, 0, 0, 16));
+    for(const s of [1, -1]){ const b = box(4.4, 0.05, 0.75, M(k==="m1"||k==="m2" ? "#e64b2a" : "#f2f2ee",{roughness:.4, transparent:true, opacity:.95}), s*2.2, 0.06, 0); b.rotation.x = s*dir*0.22; prop.add(b); }
+    const blur = new THREE.Mesh(new THREE.CircleGeometry(4.4, 40), new THREE.MeshBasicMaterial({color:"#bbbbbb", transparent:true, opacity:0, depthWrite:false, side:THREE.DoubleSide})); blur.rotation.x = -Math.PI/2; blur.position.y = 0.1; prop.add(blur);
+    g.add(prop); V.props.push({prop, k, dir, blur});
+    // contrôleur ESC sur le bras
+    const ex = (mx + cx)/2 + sx*0.0, ez = (mz + cz)/2;
+    g.add(box(1.4, 0.35, 0.8, M("#2e6bdc"), ex, top - 0.0, ez));
+    // pied d'atterrissage
+    g.add(cyl(0.18, DRONE_LIFT - 0.4, M("#141416"), mx*0.9 + cx*0.1, (top - 0.4 + gy)/2, mz*0.9 + cz*0.1, 10));
+    g.add(new THREE.Mesh(new THREE.SphereGeometry(0.32, 12, 8), M("#e64b2a")).translateX(mx*0.9 + cx*0.1).translateY(gy + 0.3).translateZ(mz*0.9 + cz*0.1));
+  });
+  // sonar orienté vers le sol sous la plaque
+  const sy = top - 0.75;
+  g.add(box(4.5, 0.12, 2.0, M("#1f5aa8"), cx, sy, cz));
+  for(const dx of [-1.3, 1.3]) g.add(cyl(0.8, 1.0, M("#d6d9dc",{metalness:1, roughness:.3}), cx + dx, sy - 0.56, cz, 32));
+  g.add(box(0.12, 0.6, 2.0, M("#1f5aa8"), cx, top - 0.4, cz));
+  // connecteurs des signaux sur le bord de la plaque
+  const pins = []; const px0 = cx - pw/2 + 0.8;
+  XC.drone.hdr.forEach((k, i) => { const px = px0 + i*PITCH*1.6, pz = cz + pd/2 - 0.5; g.add(box(0.25, 0.3, 0.25, BLACK(), px, top + 0.15, pz)); g.add(box(0.064, 0.5, 0.064, GOLD(), px, top + 0.4, pz)); pins.push(new THREE.Vector3(px, top + 0.4, pz)); });
+  XC.drone.hdr.forEach((k, i) => { if(c.nums[k]!==undefined) W(boardPin(c.nums[k]), pins[i], c.wires[k]); });
+  // batterie LiPo sur la plaque, à l'arrière
+  g.add(box(3.4, 1.3, 1.7, M("#3a3c42",{roughness:.4}), cx, top + 0.66, F.z0 - 1.2));
+  c.reach = reach;
+  return false;
+}
+
+/* ---- Terrain du rover : murs et obstacles ---- */
+let arena = null;
+const ARENA_BOXES = [[0, 30, 9, 9], [-24, 6, 7, 14], [26, -4, 10, 8], [-10, -34, 14, 6], [30, 34, 8, 8]];
+const ARENA_HALF = 58;
+function arenaRects(){
+  const r = ARENA_BOXES.map(([x,z,w,d]) => [x - w/2, x + w/2, z - d/2, z + d/2]);
+  const t = 2, h = ARENA_HALF;
+  r.push([-h - t, h + t, -h - t, -h], [-h - t, h + t, h, h + t], [-h - t, -h, -h, h], [h, h + t, -h, h]);
+  return r;
+}
+function syncArena(){
+  const want = activeTab==="lab" && current && vehicleOf(labs[current.id]) && vehicleOf(labs[current.id]).type==="rover";
+  if(!want){ if(arena){ scene.remove(arena); disposeGroup(arena); arena = null; } return; }
+  if(arena) return;
+  arena = new THREE.Group();
+  const wood = canvasTex(256,256,(q) => { q.fillStyle = "#c79a62"; q.fillRect(0,0,256,256); for(let i=0;i<40;i++){ q.strokeStyle = `rgba(110,70,30,${0.08+Math.random()*0.12})`; q.lineWidth = 1 + Math.random()*3; q.beginPath(); const y = Math.random()*256; q.moveTo(0,y); q.bezierCurveTo(80, y+10, 170, y-10, 256, y+4); q.stroke(); } });
+  const card = canvasTex(256,256,(q) => { q.fillStyle = "#b98a55"; q.fillRect(0,0,256,256); q.fillStyle = "rgba(0,0,0,.07)"; for(let i=0;i<256;i+=6) q.fillRect(0,i,256,2); q.fillStyle = "#5a3b1c"; q.font = "700 34px Arial"; q.fillText("FRAGILE", 52, 140); });
+  for(const [x0,x1,z0,z1] of arenaRects().slice(ARENA_BOXES.length)){ const m = box(x1-x0, 5, z1-z0, M("#ffffff",{map:wood, roughness:.8}), (x0+x1)/2, GROUND_Y + 2.5, (z0+z1)/2); m.castShadow = m.receiveShadow = true; arena.add(m); }
+  ARENA_BOXES.forEach(([x,z,w,d]) => { const m = box(w, 7, d, M("#ffffff",{map:card, roughness:.85}), x, GROUND_Y + 3.5, z); m.castShadow = m.receiveShadow = true; arena.add(m); });
+  scene.add(arena);
+}
+// distance mesurée par un sonar : rayon 2D contre les boîtes
+function rayDist(ox, oz, dx, dz, maxD=400){
+  let best = maxD;
+  for(const [x0,x1,z0,z1] of arenaRects()){
+    let t0 = 0, t1 = best;
+    for(const [o, d, a, b] of [[ox, dx, x0, x1], [oz, dz, z0, z1]]){
+      if(Math.abs(d) < 1e-9){ if(o < a || o > b){ t0 = Infinity; break; } continue; }
+      let ta = (a - o)/d, tb = (b - o)/d; if(ta > tb) [ta, tb] = [tb, ta];
+      t0 = Math.max(t0, ta); t1 = Math.min(t1, tb); if(t0 > t1) break;
+    }
+    if(t0 <= t1 && t0 < best) best = t0;
+  }
+  return best;
+}
+
+/* ---- Physique du véhicule ---- */
+function resetVehicle(L){ L.veh = {x:0, z:0, yaw:0, alt:0, vy:0, vx:0, vz:0, pitch:0, roll:0, t:null, tf:[0,0,0,0]}; }
+let vehPrev = null;
+function vehicleStep(now){
+  const L = labs[current?.id], c = vehicleOf(L);
+  if(!c || activeTab!=="lab" || !boardGroup){ vehPrev = null; return; }
+  if(!L.veh) resetVehicle(L);
+  const v = L.veh, V = bench && bench.userData.comps[c.id];
+  const DT = v.t===null ? 0 : Math.min(0.5, Math.max(0, (rt.now - v.t)/1000)); v.t = rt.now;
+  // pas de calcul fins : la physique suit exactement l'horloge simulée, même si l'affichage rame
+  const steps = Math.max(1, Math.ceil(DT/0.01)); const dt = DT/steps;
+  const lvl = n => n===undefined || n<0 ? 0 : pinLevel(n);
+  if(c.type==="rover"){
+    const side = (en, a, b) => lvl(en) * ((lvl(a) > 0.5 ? 1 : 0) - (lvl(b) > 0.5 ? 1 : 0));
+    const vl = side(c.nums.ena, c.nums.in1, c.nums.in2), vr = side(c.nums.enb, c.nums.in3, c.nums.in4);
+    // un moteur TT ne démarre pas sous ~35 % de rapport cyclique
+    const eff = s => Math.abs(s) < 0.35 ? 0 : s;
+    const sl = eff(vl)*c.vmax, sr = eff(vr)*c.vmax, track = c.track || 12;
+    const sp = (sl + sr)/2, om = (sr - sl)/track;
+    for(let st=0; st<steps; st++) if(dt > 0 && rt.running && !rt.paused){
+      const ny = v.yaw + om*dt, nx = v.x + Math.sin(ny)*sp*dt, nz = v.z + Math.cos(ny)*sp*dt;
+      const F = vehFootprint(), R = Math.hypot(F.W + 9, F.D + 2)/2*0.8, ccz = F.cz;
+      const clr = (x, z, yw) => { const cx2 = x + Math.sin(yw)*ccz, cz2 = z + Math.cos(yw)*ccz; let m = Infinity;
+        for(const [x0,x1,z0,z1] of arenaRects()){ const qx = Math.max(x0, Math.min(cx2, x1)), qz = Math.max(z0, Math.min(cz2, z1)); m = Math.min(m, Math.hypot(qx - cx2, qz - cz2) - R); } return m; };
+      // le rover glisse le long d'un obstacle au lieu de rester bloqué
+      const c0 = clr(v.x, v.z, v.yaw), ok = (x, z, yw) => { const cc = clr(x, z, yw); return cc >= 0 || cc >= c0 - 1e-6; };
+      const cand = [[nx, nz, ny], [nx, v.z, ny], [v.x, nz, ny], [v.x, v.z, ny], [nx, nz, v.yaw], [nx, v.z, v.yaw], [v.x, nz, v.yaw]];
+      const pick = cand.find(([x, z, yw]) => ok(x, z, yw));
+      const hit = !pick || pick!==cand[0];
+      if(pick){ v.x = pick[0]; v.z = pick[1]; v.yaw = pick[2]; }
+      if(hit && !v.bumped && rt.now - (v.bumpT||-1e9) > 4000){ v.bumped = true; v.bumpT = rt.now; consoleMsg("Choc ! Le rover frotte contre un obstacle.", "warn"); }
+      if(!hit) v.bumped = false;
+      if(V && V.wheels) V.wheels.forEach(w => { w.wh.children.forEach(m => m.rotation.x -= (w.side>0 ? sl : sr)*dt/3.25); });
+    }
+    boardGroup.rotation.order = "YXZ"; boardGroup.position.set(v.x, ROVER_LIFT, v.z); boardGroup.rotation.set(0, v.yaw, 0);
+    // sonar avant : le HC-SR04 posé sur la breadboard
+    boardGroup.updateMatrixWorld(true);
+    for(const s of L.comps.filter(x => x.type==="hcsr04")){
+      const SV = bench && bench.userData.comps[s.id]; if(!SV || !SV.g) continue;
+      const p = new THREE.Box3().setFromObject(SV.g).getCenter(new THREE.Vector3());
+      const fwd = new THREE.Vector3(Math.sin(v.yaw), 0, Math.cos(v.yaw));
+      // cône d'environ 15° : on garde l'écho le plus proche de trois rayons
+      s.autoD = Math.max(2, Math.min(...[-0.22, 0, 0.22].map(a => rayDist(p.x, p.z, Math.sin(v.yaw + a), Math.cos(v.yaw + a)))) - 0.5);
+    }
+  } else {
+    const th = k => { const n = c.nums[k], us = hw.servos.get(n); const t = us!==undefined ? (us - 1000)/1000 : lvl(n); return Math.max(0, Math.min(1, t)); };
+    // les moteurs et leurs ESC mettent ~0,1 s à changer de régime
+    const raw = ["m1","m2","m3","m4"].map(th); v.tf = v.tf || [0,0,0,0];
+    const g = 981, Tm = g/(4*Math.pow(0.5, 1.3)); let t = v.tf;
+    for(let st=0; st<steps; st++) if(dt > 0 && rt.running && !rt.paused){
+      v.tf = v.tf.map((x, i) => x + (raw[i] - x)*Math.min(1, dt/0.12)); t = v.tf;
+      const thrust = t.reduce((s,x) => s + Math.pow(x, 1.3)*Tm, 0);
+      const airborne = v.alt > 0.01 || thrust > g;
+      if(airborne){
+        v.pitch = 0.3*((t[2] + t[3]) - (t[0] + t[1])); v.roll = 0.3*((t[0] + t[3]) - (t[1] + t[2]));
+        v.yaw += 1.8*((t[1] + t[3]) - (t[0] + t[2]))*dt;
+        const ax = g*Math.tan(v.roll), az = g*Math.tan(v.pitch);
+        const wx = Math.cos(v.yaw)*ax + Math.sin(v.yaw)*az, wz = -Math.sin(v.yaw)*ax + Math.cos(v.yaw)*az;
+        v.vx += (wx - 1.6*v.vx)*dt; v.vz += (wz - 1.6*v.vz)*dt;
+        v.vy += (thrust*Math.cos(v.pitch)*Math.cos(v.roll) - g - 1.4*v.vy)*dt;
+        v.alt += v.vy*dt; v.x += v.vx*dt; v.z += v.vz*dt;
+        if(v.alt > 400){ v.alt = 400; v.vy = 0; }
+        if(v.alt <= 0){ if(v.vy < -160) consoleMsg(`Atterrissage brutal : ${Math.round(-v.vy)} cm/s au contact du sol.`, "warn"); v.alt = 0; v.vy = 0; v.vx *= 0.3; v.vz *= 0.3; v.pitch = v.roll = 0; }
+      }
+    }
+    if(V && V.props) V.props.forEach((p, i) => { const s = t[i]; if(!rt.paused) p.prop.rotation.y += p.dir*s*1.4; p.blur.material.opacity = Math.min(0.35, s*0.6); p.prop.children.forEach((m,j) => { if(j>0 && j<3) m.visible = s < 0.45; }); });
+    boardGroup.rotation.order = "YXZ"; boardGroup.position.set(v.x, DRONE_LIFT + v.alt, v.z); boardGroup.rotation.set(v.pitch, v.yaw, -v.roll);
+    c.autoD = v.alt + 2.6;
+  }
+  // la caméra suit le véhicule
+  const p = boardGroup.position;
+  if(vehPrev){ const d = new THREE.Vector3(p.x - vehPrev.x, (p.y - vehPrev.y)*0.5, p.z - vehPrev.z); if(d.lengthSq() > 0){ camera.position.add(d); controls.target.add(d); focusTarget.add(d); } }
+  vehPrev = p.clone();
+  sun.position.set(p.x + 5, 12, p.z + 7); sun.target.position.set(p.x, 0, p.z); sun.target.updateMatrixWorld();
+}
+
+/* ---- Nouveaux projets ---- */
+const t_ = (T, k) => T[k] ?? "?";
+Object.assign(PROJ, {
+  rover:{group:"avance", name:"Rover évite-obstacles", desc:"Un robot à deux roues avance seul et tourne quand le capteur à ultrasons voit un obstacle à moins de 25 cm. Le L298N inverse le sens de chaque moteur avec IN1 à IN4 et règle la vitesse avec ENA et ENB.", comps:[["rover"],["hcsr04"]], bb:"half",
+    need:["rover.ena","rover.enb","hcsr04.trig","hcsr04.echo"],
+    tpl:{arduino:T => `// Rover évite-obstacles
+const int ENA = ${t_(T,"rover.ena")}, IN1 = ${t_(T,"rover.in1")}, IN2 = ${t_(T,"rover.in2")};
+const int IN3 = ${t_(T,"rover.in3")}, IN4 = ${t_(T,"rover.in4")}, ENB = ${t_(T,"rover.enb")};
+const int TRIG = ${t_(T,"hcsr04.trig")}, ECHO = ${t_(T,"hcsr04.echo")};
+const int VITESSE = 190;          // de 0 à 255
+
+// vitesse positive = en avant, négative = en arrière
+void moteurs(int gauche, int droite) {
+  digitalWrite(IN1, gauche > 0);
+  digitalWrite(IN2, gauche < 0);
+  digitalWrite(IN3, droite > 0);
+  digitalWrite(IN4, droite < 0);
+  analogWrite(ENA, abs(gauche));
+  analogWrite(ENB, abs(droite));
+}
+
+float distance() {
+  digitalWrite(TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG, LOW);
+  return pulseIn(ECHO, HIGH, 30000) / 58.0;
+}
+
+void setup() {
+  Serial.begin(${io().baud||115200});
+  pinMode(ENA, OUTPUT); pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT); pinMode(ENB, OUTPUT);
+  pinMode(TRIG, OUTPUT);
+  pinMode(ECHO, INPUT);
+  Serial.println("Rover prêt");
+}
+
+void loop() {
+  float d = distance();
+  Serial.print("Distance : ");
+  Serial.print(d);
+  Serial.println(" cm");
+  if (d < 25) {
+    Serial.println("Obstacle : demi-tour");
+    moteurs(0, 0);
+    delay(200);
+    moteurs(-VITESSE, -VITESSE);  // recule
+    delay(350);
+    moteurs(VITESSE, -VITESSE);   // pivote sur place
+    delay(500);
+  } else {
+    moteurs(VITESSE, VITESSE);    // tout droit
+  }
+  delay(60);
+}
+`, micropython:T => `# Rover évite-obstacles
+from machine import Pin, PWM, time_pulse_us
+import time
+
+ena = PWM(Pin(${t_(T,"rover.ena")}))
+enb = PWM(Pin(${t_(T,"rover.enb")}))
+ena.freq(1000)
+enb.freq(1000)
+in1 = Pin(${t_(T,"rover.in1")}, Pin.OUT)
+in2 = Pin(${t_(T,"rover.in2")}, Pin.OUT)
+in3 = Pin(${t_(T,"rover.in3")}, Pin.OUT)
+in4 = Pin(${t_(T,"rover.in4")}, Pin.OUT)
+trig = Pin(${t_(T,"hcsr04.trig")}, Pin.OUT)
+echo = Pin(${t_(T,"hcsr04.echo")}, Pin.IN)
+VITESSE = 50000                  # de 0 à 65535
+
+def moteurs(gauche, droite):
+    in1.value(1 if gauche > 0 else 0)
+    in2.value(1 if gauche < 0 else 0)
+    in3.value(1 if droite > 0 else 0)
+    in4.value(1 if droite < 0 else 0)
+    ena.duty_u16(abs(gauche))
+    enb.duty_u16(abs(droite))
+
+def distance():
+    trig.off()
+    time.sleep_us(2)
+    trig.on()
+    time.sleep_us(10)
+    trig.off()
+    return time_pulse_us(echo, 1, 30000) / 58
+
+while True:
+    d = distance()
+    print("Distance :", round(d, 1), "cm")
+    if d < 25:
+        moteurs(0, 0)
+        time.sleep_ms(200)
+        moteurs(-VITESSE, -VITESSE)
+        time.sleep_ms(350)
+        moteurs(VITESSE, -VITESSE)
+        time.sleep_ms(500)
+    else:
+        moteurs(VITESSE, VITESSE)
+    time.sleep_ms(60)
+`, gpiozero:T => `# Rover évite-obstacles avec la classe Robot de gpiozero
+from gpiozero import Robot, Motor, DistanceSensor
+from time import sleep
+
+robot = Robot(left=Motor(${t_(T,"rover.in1")}, ${t_(T,"rover.in2")}, enable=${t_(T,"rover.ena")}),
+              right=Motor(${t_(T,"rover.in3")}, ${t_(T,"rover.in4")}, enable=${t_(T,"rover.enb")}))
+sonar = DistanceSensor(echo=${t_(T,"hcsr04.echo")}, trigger=${t_(T,"hcsr04.trig")}, max_distance=4)
+
+while True:
+    d = sonar.distance * 100
+    print("Distance :", round(d, 1), "cm")
+    if d < 25:
+        robot.stop()
+        sleep(0.2)
+        robot.backward(0.75)
+        sleep(0.35)
+        robot.right(0.75)
+        sleep(0.5)
+    else:
+        robot.forward(0.75)
+    sleep(0.06)
+`}},
+  drone:{group:"avance", name:"Drone : décollage et vol stationnaire", desc:"Quatre moteurs pilotés par des contrôleurs ESC (impulsion de 1 000 à 2 000 µs). Le sonar placé sous le drone mesure l'altitude, et une régulation PD maintient le drone à 80 cm avant de le faire atterrir.", comps:[["drone"]], bb:"mini", noRpi:true,
+    need:["drone.m1","drone.m4","drone.trig","drone.echo"],
+    tpl:{arduino:T => `// Drone : décollage, vol stationnaire à 80 cm, puis atterrissage
+#include <${io().servoInc}>
+
+Servo moteurs[4];
+const int BROCHES[4] = {${t_(T,"drone.m1")}, ${t_(T,"drone.m2")}, ${t_(T,"drone.m3")}, ${t_(T,"drone.m4")}};
+const int TRIG = ${t_(T,"drone.trig")}, ECHO = ${t_(T,"drone.echo")};
+const float CIBLE = 80.0;          // altitude visée en cm
+const int GAZ_STATIONNAIRE = 1500; // poussée qui compense le poids
+
+float altitude() {
+  digitalWrite(TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG, LOW);
+  return pulseIn(ECHO, HIGH, 30000) / 58.0;
+}
+
+void gaz(int us) {
+  for (int i = 0; i < 4; i++) moteurs[i].writeMicroseconds(us);
+}
+
+float precedente = 0;
+unsigned long debut = 0;
+
+void setup() {
+  Serial.begin(${io().baud||115200});
+  pinMode(TRIG, OUTPUT);
+  pinMode(ECHO, INPUT);
+  for (int i = 0; i < 4; i++) moteurs[i].attach(BROCHES[i], 1000, 2000);
+  gaz(1000);                        // armement des ESC : gaz au minimum
+  Serial.println("Armement des moteurs...");
+  delay(2000);
+  debut = millis();
+}
+
+void loop() {
+  float h = altitude();
+  float vitesse = (h - precedente) / 0.05;   // cm/s
+  precedente = h;
+  bool enVol = millis() - debut < 12000;      // atterrissage après 12 s
+  float cible = enVol ? CIBLE : 0;
+  int commande = GAZ_STATIONNAIRE + 4 * (cible - h) - 1.5 * vitesse;
+  if (!enVol && h < 6) commande = 1000;      // moteurs coupés au sol
+  commande = constrain(commande, 1000, 2000);
+  gaz(commande);
+  Serial.print("Altitude : ");
+  Serial.print(h);
+  Serial.print(" cm   gaz : ");
+  Serial.println(commande);
+  delay(50);
+}
+`, micropython:T => `# Drone : décollage, vol stationnaire à 80 cm, puis atterrissage
+from machine import Pin, PWM, time_pulse_us
+import time
+
+esc = []
+for b in [${t_(T,"drone.m1")}, ${t_(T,"drone.m2")}, ${t_(T,"drone.m3")}, ${t_(T,"drone.m4")}]:
+    esc.append(PWM(Pin(b)))
+`+`trig = Pin(${t_(T,"drone.trig")}, Pin.OUT)
+echo = Pin(${t_(T,"drone.echo")}, Pin.IN)
+for e in esc:
+    e.freq(50)                    # signal de servo : 50 Hz
+
+def gaz(us):
+    for e in esc:
+        e.duty_ns(us * 1000)
+
+def altitude():
+    trig.off()
+    time.sleep_us(2)
+    trig.on()
+    time.sleep_us(10)
+    trig.off()
+    return time_pulse_us(echo, 1, 30000) / 58
+
+gaz(1000)
+print("Armement des moteurs...")
+time.sleep(2)
+debut = time.ticks_ms()
+precedente = 0
+
+while True:
+    h = altitude()
+    vitesse = (h - precedente) / 0.05
+    precedente = h
+    en_vol = time.ticks_diff(time.ticks_ms(), debut) < 12000
+    cible = 80 if en_vol else 0
+    commande = int(1500 + 4 * (cible - h) - 1.5 * vitesse)
+    if not en_vol and h < 6:
+        commande = 1000
+    commande = max(1000, min(2000, commande))
+    gaz(commande)
+    print("Altitude :", round(h, 1), "cm   gaz :", commande)
+    time.sleep_ms(50)
+`}},
+  meteo:{group:"capteurs", name:"Station météo", desc:"Le DHT22 mesure la température et l'humidité, l'écran LCD 16×2 les affiche. Bougez les curseurs du capteur pour voir l'écran changer.", comps:[["dht22"],["lcd"]], noRpi:true, need:["dht22.s"],
+    tpl:{arduino:T => `// Station météo : DHT22 + écran LCD 16x2 I2C
+#include <DHT.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+DHT dht(${t_(T,"dht22.s")}, DHT22);
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+void setup() {
+  Serial.begin(${io().baud||115200});
+  dht.begin();
+  lcd.init();
+  lcd.backlight();
+  lcd.print("Station meteo");
+  delay(1000);
+}
+
+void loop() {
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
+  lcd.clear();
+  if (isnan(t) || isnan(h)) {
+    lcd.print("Erreur capteur");
+  } else {
+    lcd.setCursor(0, 0);
+    lcd.print("Temp. : ");
+    lcd.print(t, 1);
+    lcd.print(" C");
+    lcd.setCursor(0, 1);
+    lcd.print("Humid.: ");
+    lcd.print(h, 0);
+    lcd.print(" %");
+    Serial.print(t); Serial.print(" °C  "); Serial.print(h); Serial.println(" %");
+  }
+  delay(2000);
+}
+`}},
+  radar:{group:"capteurs", name:"Radar de recul", desc:"Comme sur une voiture : plus l'obstacle est proche, plus le buzzer bipe vite. La LED s'allume en dessous de 15 cm.", comps:[["hcsr04"],["buzzerA"],["led",{color:"red"}]], need:["hcsr04.trig","buzzerA.s","led.a"],
+    tpl:{arduino:T => `// Radar de recul : HC-SR04 + buzzer actif + LED
+const int TRIG = ${t_(T,"hcsr04.trig")}, ECHO = ${t_(T,"hcsr04.echo")};
+const int BUZZER = ${t_(T,"buzzerA.s")};
+const int LED = ${t_(T,"led.a")};
+
+float distance() {
+  digitalWrite(TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG, LOW);
+  return pulseIn(ECHO, HIGH, 30000) / 58.0;
+}
+
+void setup() {
+  Serial.begin(${io().baud||115200});
+  pinMode(TRIG, OUTPUT);
+  pinMode(ECHO, INPUT);
+  pinMode(BUZZER, OUTPUT);
+  pinMode(LED, OUTPUT);
+}
+
+void loop() {
+  float d = distance();
+  Serial.print(d);
+  Serial.println(" cm");
+  digitalWrite(LED, d < 15 ? HIGH : LOW);
+  if (d < 100) {
+    int pause = map(d, 2, 100, 30, 600);   // plus près = bips plus rapprochés
+    digitalWrite(BUZZER, HIGH);
+    delay(60);
+    digitalWrite(BUZZER, LOW);
+    delay(pause);
+  } else {
+    delay(200);
+  }
+}
+`, micropython:T => `# Radar de recul : HC-SR04 + buzzer actif + LED
+from machine import Pin, time_pulse_us
+import time
+
+trig = Pin(${t_(T,"hcsr04.trig")}, Pin.OUT)
+echo = Pin(${t_(T,"hcsr04.echo")}, Pin.IN)
+buzzer = Pin(${t_(T,"buzzerA.s")}, Pin.OUT)
+led = Pin(${t_(T,"led.a")}, Pin.OUT)
+
+def distance():
+    trig.off()
+    time.sleep_us(2)
+    trig.on()
+    time.sleep_us(10)
+    trig.off()
+    return time_pulse_us(echo, 1, 30000) / 58
+
+while True:
+    d = distance()
+    print(round(d, 1), "cm")
+    led.value(1 if d < 15 else 0)
+    if d < 100:
+        buzzer.on()
+        time.sleep_ms(60)
+        buzzer.off()
+        time.sleep_ms(int(30 + (d - 2) * 570 / 98))
+    else:
+        time.sleep_ms(200)
+`, gpiozero:T => `# Radar de recul : HC-SR04 + buzzer actif + LED
+from gpiozero import DistanceSensor, Buzzer, LED
+from time import sleep
+
+sonar = DistanceSensor(echo=${t_(T,"hcsr04.echo")}, trigger=${t_(T,"hcsr04.trig")}, max_distance=4)
+buzzer = Buzzer(${t_(T,"buzzerA.s")})
+led = LED(${t_(T,"led.a")})
+
+while True:
+    d = sonar.distance * 100
+    print(round(d, 1), "cm")
+    if d < 15:
+        led.on()
+    else:
+        led.off()
+    if d < 100:
+        buzzer.on()
+        sleep(0.06)
+        buzzer.off()
+        sleep(0.03 + (d - 2) * 0.0058)
+    else:
+        sleep(0.2)
+`}},
+  alarme:{group:"capteurs", name:"Alarme anti-intrusion", desc:"Le détecteur PIR repère un mouvement : la sirène sonne et le relais allume l'éclairage pendant 5 secondes. Activez « Mouvement détecté » ou cliquez sur le PIR en 3D.", comps:[["pir"],["buzzerA"],["relay"]], need:["pir.s","buzzerA.s","relay.s"],
+    tpl:{arduino:T => `// Alarme : PIR + sirène (buzzer actif) + relais d'éclairage
+const int PIR = ${t_(T,"pir.s")};
+const int SIRENE = ${t_(T,"buzzerA.s")};
+const int RELAIS = ${t_(T,"relay.s")};
+unsigned long derniereAlerte = 0;
+
+void setup() {
+  Serial.begin(${io().baud||115200});
+  pinMode(PIR, INPUT);
+  pinMode(SIRENE, OUTPUT);
+  pinMode(RELAIS, OUTPUT);
+  Serial.println("Alarme activée");
+}
+
+void loop() {
+  if (digitalRead(PIR) == HIGH) {
+    if (derniereAlerte == 0 || millis() - derniereAlerte > 5000) Serial.println("INTRUSION !");
+    derniereAlerte = millis();
+  }
+  bool alerte = millis() - derniereAlerte < 5000 && derniereAlerte > 0;
+  digitalWrite(RELAIS, alerte ? HIGH : LOW);
+  // la sirène sonne par intermittence pendant l'alerte
+  digitalWrite(SIRENE, alerte && (millis() / 250) % 2 == 0 ? HIGH : LOW);
+  delay(20);
+}
+`, micropython:T => `# Alarme : PIR + sirène (buzzer actif) + relais d'éclairage
+from machine import Pin
+import time
+
+pir = Pin(${t_(T,"pir.s")}, Pin.IN)
+sirene = Pin(${t_(T,"buzzerA.s")}, Pin.OUT)
+relais = Pin(${t_(T,"relay.s")}, Pin.OUT)
+derniere = None
+print("Alarme activée")
+
+while True:
+    if pir.value() == 1:
+        if derniere is None or time.ticks_diff(time.ticks_ms(), derniere) > 5000:
+            print("INTRUSION !")
+        derniere = time.ticks_ms()
+    alerte = derniere is not None and time.ticks_diff(time.ticks_ms(), derniere) < 5000
+    relais.value(1 if alerte else 0)
+    sirene.value(1 if alerte and (time.ticks_ms() // 250) % 2 == 0 else 0)
+    time.sleep_ms(20)
+`, gpiozero:T => `# Alarme : PIR + sirène (buzzer actif) + relais d'éclairage
+from gpiozero import MotionSensor, Buzzer, OutputDevice
+from time import sleep
+
+pir = MotionSensor(${t_(T,"pir.s")})
+sirene = Buzzer(${t_(T,"buzzerA.s")})
+relais = OutputDevice(${t_(T,"relay.s")})
+print("Alarme activée")
+
+while True:
+    pir.wait_for_motion()
+    print("INTRUSION !")
+    relais.on()
+    for i in range(10):
+        sirene.on()
+        sleep(0.25)
+        sirene.off()
+        sleep(0.25)
+    relais.off()
+`}},
+  thermostat:{group:"capteurs", name:"Thermostat avec ventilateur", desc:"Au-dessus de 26 °C, le relais se ferme et le ventilateur tourne, d'autant plus vite qu'il fait chaud. Montez la température du DHT22 avec son curseur.", comps:[["dht22"],["relay"],["fan"]], noRpi:true, need:["dht22.s","relay.s","fan.ina"],
+    tpl:{arduino:T => `// Thermostat : DHT22 + relais + ventilateur
+#include <DHT.h>
+
+DHT dht(${t_(T,"dht22.s")}, DHT22);
+const int RELAIS = ${t_(T,"relay.s")};
+const int INA = ${t_(T,"fan.ina")}, INB = ${t_(T,"fan.inb")};
+const float SEUIL = 26.0;
+
+void setup() {
+  Serial.begin(${io().baud||115200});
+  dht.begin();
+  pinMode(RELAIS, OUTPUT);
+  pinMode(INA, OUTPUT);
+  pinMode(INB, OUTPUT);
+  digitalWrite(INB, LOW);
+}
+
+void loop() {
+  float t = dht.readTemperature();
+  if (isnan(t)) return;
+  int vitesse = 0;
+  if (t > SEUIL) vitesse = constrain(map(t * 10, SEUIL * 10, 350, 120, 255), 120, 255);
+  digitalWrite(RELAIS, t > SEUIL ? HIGH : LOW);
+  analogWrite(INA, vitesse);
+  Serial.print("Température : ");
+  Serial.print(t);
+  Serial.print(" °C  ventilateur : ");
+  Serial.println(vitesse);
+  delay(1000);
+}
+`, micropython:T => `# Thermostat : DHT22 + relais + ventilateur
+from machine import Pin, PWM
+import dht
+import time
+
+capteur = dht.DHT22(Pin(${t_(T,"dht22.s")}))
+relais = Pin(${t_(T,"relay.s")}, Pin.OUT)
+ventilo = PWM(Pin(${t_(T,"fan.ina")}))
+ventilo.freq(1000)
+inb = Pin(${t_(T,"fan.inb")}, Pin.OUT, value=0)
+SEUIL = 26
+
+while True:
+    capteur.measure()
+    t = capteur.temperature()
+    if t > SEUIL:
+        vitesse = min(65535, int(30000 + (t - SEUIL) * 4000))
+    else:
+        vitesse = 0
+    relais.value(1 if t > SEUIL else 0)
+    ventilo.duty_u16(vitesse)
+    print("Température :", t, "°C   ventilateur :", vitesse)
+    time.sleep(1)
+`}},
+  feu:{group:"capteurs", name:"Feu tricolore piéton", desc:"Le feu reste vert pour les voitures. Quand un piéton appuie sur le bouton, il passe à l'orange puis au rouge pendant 5 secondes.", comps:[["traffic"],["button"]], need:["traffic.r","button.s"],
+    tpl:{arduino:T => `// Feu tricolore avec bouton piéton
+const int ROUGE = ${t_(T,"traffic.r")}, JAUNE = ${t_(T,"traffic.y")}, VERT = ${t_(T,"traffic.g")};
+const int BOUTON = ${t_(T,"button.s")};
+
+void feu(int r, int j, int v) {
+  digitalWrite(ROUGE, r);
+  digitalWrite(JAUNE, j);
+  digitalWrite(VERT, v);
+}
+
+void setup() {
+  Serial.begin(${io().baud||115200});
+  pinMode(ROUGE, OUTPUT);
+  pinMode(JAUNE, OUTPUT);
+  pinMode(VERT, OUTPUT);
+  pinMode(BOUTON, INPUT_PULLUP);
+  feu(LOW, LOW, HIGH);
+}
+
+void loop() {
+  if (digitalRead(BOUTON) == LOW) {
+    Serial.println("Demande piéton");
+    delay(1000);
+    feu(LOW, HIGH, LOW);        // orange
+    delay(2000);
+    feu(HIGH, LOW, LOW);        // rouge : les piétons traversent
+    Serial.println("Les piétons traversent");
+    delay(5000);
+    feu(LOW, LOW, HIGH);        // retour au vert
+  }
+  delay(20);
+}
+`, micropython:T => `# Feu tricolore avec bouton piéton
+from machine import Pin
+import time
+
+rouge = Pin(${t_(T,"traffic.r")}, Pin.OUT)
+jaune = Pin(${t_(T,"traffic.y")}, Pin.OUT)
+vert = Pin(${t_(T,"traffic.g")}, Pin.OUT)
+bouton = Pin(${t_(T,"button.s")}, Pin.IN, Pin.PULL_UP)
+
+def feu(r, j, v):
+    rouge.value(r)
+    jaune.value(j)
+    vert.value(v)
+
+feu(0, 0, 1)
+while True:
+    if bouton.value() == 0:
+        print("Demande piéton")
+        time.sleep(1)
+        feu(0, 1, 0)
+        time.sleep(2)
+        feu(1, 0, 0)
+        print("Les piétons traversent")
+        time.sleep(5)
+        feu(0, 0, 1)
+    time.sleep_ms(20)
+`, gpiozero:T => `# Feu tricolore avec bouton piéton
+from gpiozero import TrafficLights, Button
+from time import sleep
+
+feu = TrafficLights(${t_(T,"traffic.r")}, ${t_(T,"traffic.y")}, ${t_(T,"traffic.g")})
+bouton = Button(${t_(T,"button.s")})
+feu.green.on()
+
+while True:
+    bouton.wait_for_press()
+    print("Demande piéton")
+    sleep(1)
+    feu.off()
+    feu.amber.on()
+    sleep(2)
+    feu.off()
+    feu.red.on()
+    print("Les piétons traversent")
+    sleep(5)
+    feu.off()
+    feu.green.on()
+`}},
+  anneau:{group:"capteurs", name:"Anneau lumineux réglable", desc:"Le potentiomètre choisit la couleur d'un anneau de 12 LED NeoPixel, et une lumière tourne autour de l'anneau.", comps:[["neopixel"],["pot"]], noRpi:true, need:["neopixel.din","pot.s"],
+    tpl:{arduino:T => `// Anneau NeoPixel : le potentiomètre choisit la couleur
+#include <Adafruit_NeoPixel.h>
+
+Adafruit_NeoPixel anneau(12, ${t_(T,"neopixel.din")}, NEO_GRB + NEO_KHZ800);
+const int POT = ${t_(T,"pot.s")};
+int tete = 0;
+
+void setup() {
+  anneau.begin();
+  anneau.setBrightness(90);
+}
+
+void loop() {
+  long teinte = map(analogRead(POT), 0, ${2**(io().adcBits||10)-1}, 0, 65535);
+  for (int i = 0; i < 12; i++) {
+    int ecart = (tete - i + 12) % 12;          // traînée lumineuse
+    int lum = ecart < 5 ? 255 - ecart * 55 : 0;
+    anneau.setPixelColor(i, anneau.ColorHSV(teinte, 255, lum));
+  }
+  anneau.show();
+  tete = (tete + 1) % 12;
+  delay(70);
+}
+`, micropython:T => `# Anneau NeoPixel : le potentiomètre choisit la couleur
+from machine import Pin, ADC
+from neopixel import NeoPixel
+import time
+
+anneau = NeoPixel(Pin(${t_(T,"neopixel.din")}), 12)
+pot = ADC(${t_(T,"pot.s")})
+tete = 0
+
+def couleur(v, lum):
+    # roue chromatique simplifiée : rouge -> vert -> bleu
+    v = v * 3 // 65536
+    if v == 0:
+        return (lum, 0, 0)
+    if v == 1:
+        return (0, lum, 0)
+    return (0, 0, lum)
+
+while True:
+    v = pot.read_u16()
+    for i in range(12):
+        ecart = (tete - i + 12) % 12
+        anneau[i] = couleur(v, 255 - ecart * 55 if ecart < 5 else 0)
+    anneau.write()
+    tete = (tete + 1) % 12
+    time.sleep_ms(70)
+`}},
+  arrosage:{group:"capteurs", name:"Arrosage automatique", desc:"Quand la terre devient trop sèche (humidité sous 30 %), le relais met la pompe en marche jusqu'à ce que le sol soit de nouveau humide.", comps:[["soil"],["relay"],["led",{color:"blue"}]], need:["soil.s","relay.s","led.a"], needAdc:true,
+    tpl:{arduino:T => `// Arrosage automatique : capteur d'humidité du sol + relais de pompe
+const int SOL = ${t_(T,"soil.s")};
+const int POMPE = ${t_(T,"relay.s")};
+const int LED = ${t_(T,"led.a")};
+const int MAX = ${2**(io().adcBits||10)-1};
+
+void setup() {
+  Serial.begin(${io().baud||115200});
+  pinMode(POMPE, OUTPUT);
+  pinMode(LED, OUTPUT);
+}
+
+void loop() {
+  int brut = analogRead(SOL);
+  // capteur capacitif : la tension baisse quand la terre est humide
+  int humidite = constrain(map(brut, MAX * 82 / 100, MAX * 32 / 100, 0, 100), 0, 100);
+  bool arroser = humidite < 30;
+  digitalWrite(POMPE, arroser ? HIGH : LOW);
+  digitalWrite(LED, arroser ? HIGH : LOW);
+  Serial.print("Humidité du sol : ");
+  Serial.print(humidite);
+  Serial.println(arroser ? " %  -> arrosage" : " %");
+  delay(1000);
+}
+`, micropython:T => `# Arrosage automatique : capteur d'humidité du sol + relais de pompe
+from machine import Pin, ADC
+import time
+
+sol = ADC(${t_(T,"soil.s")})
+pompe = Pin(${t_(T,"relay.s")}, Pin.OUT)
+led = Pin(${t_(T,"led.a")}, Pin.OUT)
+
+while True:
+    brut = sol.read_u16()
+    humidite = max(0, min(100, int((0.82 * 65535 - brut) * 100 / (0.5 * 65535))))
+    arroser = humidite < 30
+    pompe.value(1 if arroser else 0)
+    led.value(1 if arroser else 0)
+    print("Humidité du sol :", humidite, "%", "-> arrosage" if arroser else "")
+    time.sleep(1)
+`}},
+  compteur:{group:"capteurs", name:"Compteur à encodeur", desc:"Tournez l'encodeur rotatif pour faire défiler le nombre sur l'afficheur TM1637. Un appui sur l'encodeur remet le compteur à zéro.", comps:[["encoder"],["tm1637"]], noRpi:true, need:["encoder.clk","tm1637.clk"],
+    tpl:{arduino:T => `// Compteur : encodeur rotatif + afficheur TM1637
+#include <TM1637Display.h>
+
+TM1637Display afficheur(${t_(T,"tm1637.clk")}, ${t_(T,"tm1637.dio")});
+const int CLK = ${t_(T,"encoder.clk")}, DT = ${t_(T,"encoder.dt")}, SW = ${t_(T,"encoder.sw")};
+int compteur = 0;
+int dernierClk = HIGH;
+
+void setup() {
+  pinMode(CLK, INPUT_PULLUP);
+  pinMode(DT, INPUT_PULLUP);
+  pinMode(SW, INPUT_PULLUP);
+  afficheur.setBrightness(6);
+  afficheur.showNumberDec(compteur);
+}
+
+void loop() {
+  int clk = digitalRead(CLK);
+  if (clk != dernierClk && clk == LOW) {
+    compteur += digitalRead(DT) != clk ? 1 : -1;
+    afficheur.showNumberDec(compteur);
+  }
+  dernierClk = clk;
+  if (digitalRead(SW) == LOW) {
+    compteur = 0;
+    afficheur.showNumberDec(compteur);
+    delay(200);
+  }
+}
+`, micropython:T => `# Compteur : encodeur rotatif + afficheur TM1637
+from machine import Pin
+import tm1637
+import time
+
+afficheur = tm1637.TM1637(clk=Pin(${t_(T,"tm1637.clk")}), dio=Pin(${t_(T,"tm1637.dio")}))
+clk = Pin(${t_(T,"encoder.clk")}, Pin.IN, Pin.PULL_UP)
+dt = Pin(${t_(T,"encoder.dt")}, Pin.IN, Pin.PULL_UP)
+sw = Pin(${t_(T,"encoder.sw")}, Pin.IN, Pin.PULL_UP)
+compteur = 0
+dernier = clk.value()
+afficheur.number(compteur)
+
+while True:
+    v = clk.value()
+    if v != dernier and v == 0:
+        compteur += 1 if dt.value() != v else -1
+        afficheur.number(compteur)
+    dernier = v
+    if sw.value() == 0:
+        compteur = 0
+        afficheur.number(0)
+        time.sleep_ms(200)
+    time.sleep_ms(1)
+`}},
+  jeu:{group:"capteurs", name:"Jeu du point sur matrice 8×8", desc:"Le joystick déplace un point lumineux sur la matrice LED. Appuyez sur le joystick pour tout effacer.", comps:[["matrix"],["joystick"]], noRpi:true, needAdc:true, need:["matrix.din","joystick.x"],
+    tpl:{arduino:T => `// Jeu du point : joystick + matrice LED 8x8 MAX7219
+#include <LedControl.h>
+
+LedControl matrice = LedControl(${t_(T,"matrix.din")}, ${t_(T,"matrix.clk")}, ${t_(T,"matrix.cs")}, 1);
+const int VRX = ${t_(T,"joystick.x")}, VRY = ${t_(T,"joystick.y")}, SW = ${t_(T,"joystick.sw")};
+const int MAX = ${2**(io().adcBits||10)-1};
+int x = 3, y = 3;
+
+void setup() {
+  matrice.shutdown(0, false);
+  matrice.setIntensity(0, 8);
+  matrice.clearDisplay(0);
+  pinMode(SW, INPUT_PULLUP);
+}
+
+void loop() {
+  int jx = analogRead(VRX), jy = analogRead(VRY);
+  if (jx > MAX * 3 / 4 && x < 7) x++;
+  if (jx < MAX / 4 && x > 0) x--;
+  if (jy > MAX * 3 / 4 && y < 7) y++;
+  if (jy < MAX / 4 && y > 0) y--;
+  if (digitalRead(SW) == LOW) matrice.clearDisplay(0);
+  matrice.setLed(0, y, x, true);    // le point laisse une trace
+  delay(150);
+}
+`}}
+});
+Object.values(PROJ).forEach(p => { if(!p.group) p.group = "base"; });
+
 function reassemble(){
   const now = performance.now();
   partGroups.forEach((g,i) => { g.userData.start = now + (reduceMotion?0:i*Math.min(90,2600/partGroups.length)); g.userData.from = reduceMotion?0:3.5; });
@@ -4197,7 +5174,7 @@ function groundPoint(ev, y){
   return boardGroup.worldToLocal(dragPt.clone());
 }
 function boardHit(ev){
-  if(activeTab!=="lab" || !boardBody) return false;
+  if(activeTab!=="lab" || !boardBody || vehicleOf(lab())) return false;
   const r = renderer.domElement.getBoundingClientRect();
   ndc.set(((ev.clientX-r.left)/r.width)*2-1, -((ev.clientY-r.top)/r.height)*2+1);
   ray.setFromCamera(ndc, camera);
